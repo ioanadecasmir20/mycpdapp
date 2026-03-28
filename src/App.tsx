@@ -576,6 +576,143 @@ export default function App() {
   const isSharedRoute = path.startsWith("/share/");
   const shareToken = isSharedRoute ? path.split("/share/")[1] : null;
 
+    const [sharedViewLoading, setSharedViewLoading] = useState(false);
+  const [sharedViewError, setSharedViewError] = useState("");
+  const [sharedViewData, setSharedViewData] = useState<any | null>(null);
+  const [sharedViewRecords, setSharedViewRecords] = useState<any[]>([]);
+
+  async function fetchPublicSharedView(token: string) {
+    setSharedViewLoading(true);
+    setSharedViewError("");
+    setSharedViewData(null);
+    setSharedViewRecords([]);
+  
+    try {
+      const { data: view, error: viewError } = await supabase
+        .from("shared_views")
+        .select("*")
+        .eq("share_token", token)
+        .single();
+  
+      if (viewError || !view) {
+        throw new Error("Shared view not found.");
+      }
+  
+      setSharedViewData(view);
+  
+      let query = supabase
+        .from("cpd_records")
+        .select("*")
+        .eq("user_id", view.user_id);
+  
+      if (view.search_query) {
+        const q = view.search_query.toLowerCase();
+        // search filtering can be applied client-side after fetch if easier
+      }
+  
+      const { data: records, error: recordsError } = await query;
+  
+      if (recordsError) {
+        throw recordsError;
+      }
+  
+      setSharedViewRecords(records || []);
+    } catch (error: any) {
+      setSharedViewError(error.message || "Failed to load shared view.");
+    } finally {
+      setSharedViewLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (isSharedRoute && shareToken) {
+      fetchPublicSharedView(shareToken);
+    }
+  }, [isSharedRoute, shareToken]);
+
+  if (isSharedRoute) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          padding: 24,
+          background: "#f8fafc",
+          color: "#0f172a",
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 900,
+            margin: "0 auto",
+            background: "#fff",
+            borderRadius: 20,
+            padding: 24,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.06)",
+          }}
+        >
+          {sharedViewLoading ? (
+            <div>Loading shared view...</div>
+          ) : sharedViewError ? (
+            <div style={{ color: "#dc2626", fontWeight: 700 }}>
+              {sharedViewError}
+            </div>
+          ) : (
+            <>
+              <h1 style={{ marginTop: 0, marginBottom: 8 }}>
+                {sharedViewData?.title || "Shared CPD View"}
+              </h1>
+  
+              <p style={{ color: "#64748b", marginTop: 0 }}>
+                Live shared CPD record
+              </p>
+  
+              {sharedViewRecords.length === 0 ? (
+                <div
+                  style={{
+                    marginTop: 20,
+                    padding: 16,
+                    border: "1px dashed #cbd5e1",
+                    borderRadius: 12,
+                    color: "#64748b",
+                  }}
+                >
+                  No records available in this shared view.
+                </div>
+              ) : (
+                <div style={{ display: "grid", gap: 12, marginTop: 20 }}>
+                  {sharedViewRecords.map((record) => (
+                    <div
+                      key={record.id}
+                      style={{
+                        border: "1px solid #e2e8f0",
+                        borderRadius: 14,
+                        padding: 16,
+                      }}
+                    >
+                      <strong style={{ display: "block", fontSize: 16 }}>
+                        {record.activity_title}
+                      </strong>
+  
+                      <div style={{ marginTop: 6, color: "#64748b", fontSize: 14 }}>
+                        {record.cpd_type} • {record.date_completed || record.planned_for_date || "No date"} • {record.hours}h {record.minutes}m
+                      </div>
+  
+                      {record.outcome && (
+                        <div style={{ marginTop: 10, lineHeight: 1.6 }}>
+                          {record.outcome}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (isSharedRoute) {
     return (
       <div style={{ padding: 40, fontSize: 20 }}>
