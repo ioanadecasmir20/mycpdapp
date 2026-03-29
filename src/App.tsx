@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
-
+import { createClient } from "@supabase/supabase-js";
 import {
   Trash2,
   LogOut,
