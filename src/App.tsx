@@ -4203,6 +4203,7 @@ export default function App() {
                           margin: "6px 0 0",
                           color: theme.colors.subtext,
                           fontSize: 14,
+                          marginBottom: 12,
                         }}
                       >
                         Upcoming and overdue CPD activities to complete.
@@ -4725,6 +4726,7 @@ export default function App() {
                       gap: 10,
                       flexWrap: "wrap",
                       marginTop: 12,
+                      marginBottom: 12,
                     }}
                   >
                     <div style={{ ...fieldWrapStyle, marginTop: 12 }}>
