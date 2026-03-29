@@ -657,6 +657,41 @@ export default function App() {
   const [sharedViewData, setSharedViewData] = useState<any | null>(null);
   const [sharedViewRecords, setSharedViewRecords] = useState<any[]>([]);
 
+  const hasPremiumAccess = userRole === "admin" || userRole === "premium_member";
+
+  const activeGoalCount = goals.filter((g) => !g.completed).length;
+  const shareLinkCount = sharedViews.length;
+
+  const canCreateGoal = hasPremiumAccess || activeGoalCount < 1;
+  const canCreateRecord = hasPremiumAccess || records.length < 50;
+  const canDownloadPdf = hasPremiumAccess;
+  const canUseBulkUpload = hasPremiumAccess;
+  const canReadArticles = hasPremiumAccess;
+  const canCreateShareLink = hasPremiumAccess || shareLinkCount < 1;
+
+  const [showPremiumPopup, setShowPremiumPopup] = useState(false);
+  const [premiumReason, setPremiumReason] = useState("");
+
+  const hasUsedFreeGoal = activeGoalCount >= 1;
+  const hasUsedFreeShare = shareLinkCount >= 1;
+
+  const premiumBadgeStyle: CSSProperties = {
+    marginLeft: 2,
+    padding: "2px 8px",
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: 800,
+    background: "#fef3c7",
+    color: "#92400e",
+    border: "1px solid #fcd34d",
+    lineHeight: 1.2,
+  };
+
+  function requirePremium(reason: string) {
+    setPremiumReason(reason);
+    setShowPremiumPopup(true);
+  }
+
   async function fetchPublicSharedView(token: string) {
     setSharedViewLoading(true);
     setSharedViewError("");
@@ -1394,12 +1429,12 @@ export default function App() {
 
   function parseYMDToLocalDate(value?: string | null) {
     if (!value) return null;
-  
+
     if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
       const [year, month, day] = value.split("-").map(Number);
       return new Date(year, month - 1, day);
     }
-  
+
     const d = new Date(value);
     return isNaN(d.getTime()) ? null : d;
   }
@@ -2011,7 +2046,7 @@ export default function App() {
       surname: surname || null,
       main_job_role: mainJobRole || null,
       secondary_job_role: secondaryJobRole || null,
-      role: emailAddress === "member",
+      role: "member",
     });
 
     if (error) {
@@ -2074,8 +2109,16 @@ export default function App() {
 
   async function handleCreateGoal(e: FormEvent) {
     e.preventDefault();
-
     if (!session?.user?.id) return;
+
+    const isEditing = !!editingGoalId;
+
+    if (!isEditing && !canCreateGoal) {
+      requirePremium(
+        "Free members can create 1 active goal at a time. Upgrade to Premium for unlimited goals."
+      );
+      return;
+    }
 
     const sectorsArray = goalSectors
       .split(",")
@@ -2085,8 +2128,7 @@ export default function App() {
     const payload = {
       title: goalTitle,
       target_hours: Number(goalHours),
-      date_from:
-        goalFrom || new Date().toISOString().slice(0, 10),
+      date_from: goalFrom || new Date().toISOString().slice(0, 10),
       date_to: goalTo,
       sectors: sectorsArray,
       updated_at: new Date().toISOString(),
@@ -2106,7 +2148,6 @@ export default function App() {
     }
 
     resetGoalForm();
-
     fetchGoals(session.user.id);
   }
 
@@ -2438,6 +2479,24 @@ export default function App() {
       return;
     }
 
+    if (!hasPremiumAccess) {
+      const validRowsCount = importRows.filter(
+        (row) => String(row["Activity Title"] || "").trim()
+      ).length;
+    
+      if (records.length + validRowsCount > 50) {
+        requirePremium(
+          "Free members can store up to 50 CPD records. Upgrade to Premium for unlimited records and bulk upload."
+        );
+        return;
+      }
+    }
+
+    if (!canUseBulkUpload) {
+      requirePremium("Bulk upload is a Premium feature.");
+      return;
+    }
+
     setImportingRows(true);
     setImportMessage("");
 
@@ -2616,11 +2675,17 @@ export default function App() {
   async function handleCreateSharedView() {
     if (!session?.user?.id) return;
 
+    if (!canCreateShareLink) {
+      requirePremium(
+        "Free members can create 1 live shared view. Upgrade to Premium for unlimited shared views."
+      );
+      return;
+    }
+
     setShareMessage("");
 
     try {
       const token = generateShareToken();
-
       const title =
         shareTitle.trim() ||
         `Shared view ${new Date().toLocaleDateString("en-GB")}`;
@@ -2651,7 +2716,6 @@ export default function App() {
       const shareUrl = `${publicShareBaseUrl}/${token}`;
       setShareMessage(`Shared link created: ${shareUrl}`);
       setShareTitle("");
-
       await fetchSharedViews(session.user.id);
     } catch (error: any) {
       setShareMessage(error.message || "Failed to create shared view.");
@@ -2930,6 +2994,14 @@ export default function App() {
   async function handleAddOrUpdateRecord(e: FormEvent) {
     e.preventDefault();
     if (!session?.user?.id) return;
+
+    if (!editingId && !canCreateRecord) {
+      requirePremium(
+        "Free members can store up to 50 CPD records. Upgrade to Premium for unlimited records."
+      );
+      setSavingRecord(false);
+      return;
+    }
 
     setSavingRecord(true);
     setRecordMessage("");
@@ -3549,7 +3621,13 @@ export default function App() {
               </button>
 
               <button
-                onClick={() => setAddPageTab("bulk")}
+                onClick={() => {
+                  if (!canUseBulkUpload) {
+                    requirePremium("Bulk upload is a Premium feature.");
+                    return;
+                  }
+                  setAddPageTab("bulk");
+                }}
                 style={{
                   flex: 1,
                   padding: "10px",
@@ -3568,6 +3646,7 @@ export default function App() {
                 }}
               >
                 Bulk upload
+                {!hasPremiumAccess && <span style={premiumBadgeStyle}>Premium</span>}
               </button>
             </div>
 
@@ -4710,6 +4789,12 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => {
+                      if (!canCreateRecord) {
+                        requirePremium(
+                          "Free members can store up to 50 CPD records. Upgrade to Premium for unlimited records."
+                        );
+                        return;
+                      }
                       setShowAddPage(true);
                       setAddPageTab("single");
                     }}
@@ -4723,7 +4808,11 @@ export default function App() {
                   >
                     <Plus size={18} strokeWidth={2} />
                     Add CPD Record
+                    {!hasPremiumAccess && records.length >= 50 && (
+                      <span style={premiumBadgeStyle}>Premium</span>
+                    )}
                   </button>
+
                 </div>
                 <div>
 
@@ -4763,7 +4852,13 @@ export default function App() {
                     </button>
 
                     <button
-                      onClick={() => downloadPdf(filteredRecords)}
+                      onClick={() => {
+                        if (!canDownloadPdf) {
+                          requirePremium("PDF export is a Premium feature.");
+                          return;
+                        }
+                        downloadPdf(filteredRecords);
+                      }}
                       style={{
                         ...secondaryButtonStyle,
                         display: "flex",
@@ -4776,6 +4871,7 @@ export default function App() {
                     >
                       <Download size={18} strokeWidth={2} />
                       PDF
+                      {!hasPremiumAccess && <span style={premiumBadgeStyle}>Premium</span>}
                     </button>
 
                     <button
@@ -4792,6 +4888,9 @@ export default function App() {
                     >
                       <Share2 size={18} strokeWidth={2} />
                       Share view
+                      {!hasPremiumAccess && hasUsedFreeShare && (
+                        <span style={premiumBadgeStyle}>Premium</span>
+                      )}
                     </button>
 
                     <button
@@ -5123,9 +5222,18 @@ export default function App() {
                   >
                     <button
                       type="submit"
-                      style={primaryButtonStyle}
+                      style={{
+                        ...primaryButtonStyle,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                      }}
                     >
                       {editingGoalId ? "Update goal" : "Create goal"}
+                      {!editingGoalId && !hasPremiumAccess && hasUsedFreeGoal && (
+                        <span style={premiumBadgeStyle}>Premium</span>
+                      )}
                     </button>
 
                     {editingGoalId && (
@@ -5899,10 +6007,23 @@ export default function App() {
                           <div style={{ marginTop: 12 }}>
                             <button
                               type="button"
-                              onClick={() => setSelectedArticle(article)}
-                              style={secondaryButtonStyle}
+                              onClick={() => {
+                                if (!canReadArticles) {
+                                  requirePremium("Reading full articles is a Premium feature.");
+                                  return;
+                                }
+                                setSelectedArticle(article);
+                              }}
+                              style={{
+                                ...secondaryButtonStyle,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                gap: 8,
+                              }}
                             >
                               Read More
+                              {!hasPremiumAccess && <span style={premiumBadgeStyle}>Premium</span>}
                             </button>
                           </div>
                         </div>
@@ -6960,6 +7081,55 @@ export default function App() {
           );
         })}
       </div>
+
+      {showPremiumPopup && (
+        <div style={modalOverlayStyle} onClick={() => setShowPremiumPopup(false)}>
+          <div
+            style={modalCardWrapStyle}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={modalCardStyle}>
+              <div style={sheetHeaderStyle}>
+                <h2 style={{ margin: 0 }}>Upgrade required</h2>
+                <p style={{ margin: "8px 0 0", color: theme.colors.subtext }}>
+                  {premiumReason}
+                </p>
+              </div>
+
+              <div style={sheetSectionStyle}>
+                <div style={{ display: "grid", gap: 8, color: theme.colors.text }}>
+                  <div>Premium includes</div>
+                  <div>• Unlimited goals</div>
+                  <div>• Unlimited CPD records</div>
+                  <div>• PDF export</div>
+                  <div>• Bulk upload</div>
+                  <div>• Unlimited live share links</div>
+                  <div>• Articles</div>
+                </div>
+
+                <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+                  <button
+                    style={primaryButtonStyle}
+                    onClick={() => {
+                      setShowPremiumPopup(false);
+                      // later connect this to your Apple paywall
+                    }}
+                  >
+                    Upgrade to Premium
+                  </button>
+
+                  <button
+                    style={secondaryButtonStyle}
+                    onClick={() => setShowPremiumPopup(false)}
+                  >
+                    Maybe later
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
