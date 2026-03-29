@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties, FormEvent } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { createClient } from "@supabase/supabase-js";
+import { supabase } from "./lib/supabase";
 import {
   Trash2,
   LogOut,
@@ -66,11 +66,6 @@ type FormState = {
   evidence_available: boolean;
   status: string;
 };
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const emptyForm: FormState = {
   activity_title: "",
@@ -576,7 +571,7 @@ export default function App() {
   const isSharedRoute = path.startsWith("/share/");
   const shareToken = isSharedRoute ? path.split("/share/")[1] : null;
 
-    const [sharedViewLoading, setSharedViewLoading] = useState(false);
+  const [sharedViewLoading, setSharedViewLoading] = useState(false);
   const [sharedViewError, setSharedViewError] = useState("");
   const [sharedViewData, setSharedViewData] = useState<any | null>(null);
   const [sharedViewRecords, setSharedViewRecords] = useState<any[]>([]);
@@ -586,32 +581,140 @@ export default function App() {
     setSharedViewError("");
     setSharedViewData(null);
     setSharedViewRecords([]);
-  
+
     try {
       const { data: view, error: viewError } = await supabase
         .from("shared_views")
         .select("*")
         .eq("share_token", token)
         .single();
-  
+
       if (viewError || !view) {
         throw new Error("Shared view not found.");
       }
-  
-      setSharedViewData(view);
-  
+
+      // fetch profile for full name
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("forename, surname")
+        .eq("id", view.user_id)
+        .single();
+
+      setSharedViewData({
+        ...view,
+        forename: profile?.forename || "",
+        surname: profile?.surname || "",
+      });
+
       let query = supabase
         .from("cpd_records")
         .select("*")
         .eq("user_id", view.user_id);
-  
+
+      if (view.filter_status && view.filter_status !== "all") {
+        query = query.eq("status", view.filter_status);
+      }
+
+      if (view.filter_type && view.filter_type !== "all") {
+        query = query.eq("cpd_type", view.filter_type);
+      }
+
+      if (view.filter_evidence && view.filter_evidence !== "all") {
+        query =
+          view.filter_evidence === "yes"
+            ? query.eq("evidence_available", true)
+            : query.eq("evidence_available", false);
+      }
+
+      if (view.filter_learning_method && view.filter_learning_method !== "all") {
+        query = query.eq("learning_method", view.filter_learning_method);
+      }
+
+      if (view.filter_certificate && view.filter_certificate !== "all") {
+        query =
+          view.filter_certificate === "yes"
+            ? query.not("certificate_file_url", "is", null)
+            : query.is("certificate_file_url", null);
+      }
+
+      if (view.filter_date_from) {
+        query = query.gte("date_completed", view.filter_date_from);
+      }
+
+      if (view.filter_date_to) {
+        query = query.lte("date_completed", view.filter_date_to);
+      }
+
+      if (view.filter_provider) {
+        query = query.ilike("provider", `%${view.filter_provider}%`);
+      }
+
+      if (view.sort_by === "oldest") {
+        query = query.order("date_completed", { ascending: true, nullsFirst: false });
+      } else if (view.sort_by === "a-z") {
+        query = query.order("activity_title", { ascending: true });
+      } else if (view.sort_by === "z-a") {
+        query = query.order("activity_title", { ascending: false });
+      } else {
+        query = query.order("date_completed", { ascending: false, nullsFirst: false });
+      }
+
       const { data: records, error: recordsError } = await query;
-  
+
       if (recordsError) {
         throw recordsError;
       }
-  
-      setSharedViewRecords(records || []);
+
+      let filtered = records || [];
+
+      if (view.search_query) {
+        const q = view.search_query.toLowerCase();
+        filtered = filtered.filter((record) =>
+          [
+            record.activity_title,
+            record.cpd_type,
+            record.provider,
+            record.learning_method,
+            record.description,
+            record.outcome,
+            ...(Array.isArray(record.sectors) ? record.sectors : []),
+          ]
+            .filter(Boolean)
+            .some((value) => String(value).toLowerCase().includes(q))
+        );
+      }
+
+      if (view.filter_min_minutes) {
+        const min = Number(view.filter_min_minutes);
+        filtered = filtered.filter(
+          (record) => (record.hours || 0) * 60 + (record.minutes || 0) >= min
+        );
+      }
+
+      if (view.filter_max_minutes) {
+        const max = Number(view.filter_max_minutes);
+        filtered = filtered.filter(
+          (record) => (record.hours || 0) * 60 + (record.minutes || 0) <= max
+        );
+      }
+
+      if (view.filter_sectors) {
+        const sectors = String(view.filter_sectors)
+          .split(",")
+          .map((s: string) => s.trim().toLowerCase())
+          .filter(Boolean);
+
+        if (sectors.length) {
+          filtered = filtered.filter((record) => {
+            const recordSectors = Array.isArray(record.sectors)
+              ? record.sectors.map((s: string) => s.toLowerCase())
+              : [];
+            return sectors.some((sector: string) => recordSectors.includes(sector));
+          });
+        }
+      }
+
+      setSharedViewRecords(filtered);
     } catch (error: any) {
       setSharedViewError(error.message || "Failed to load shared view.");
     } finally {
@@ -656,11 +759,17 @@ export default function App() {
               <h1 style={{ marginTop: 0, marginBottom: 8 }}>
                 {sharedViewData?.title || "Shared CPD View"}
               </h1>
-  
-              <p style={{ color: "#64748b", marginTop: 0 }}>
+
+              <p style={{ color: "#64748b", marginTop: 0, marginBottom: 6 }}>
                 Live shared CPD record
               </p>
-  
+
+              {(sharedViewData?.forename || sharedViewData?.surname) && (
+                <p style={{ color: "#334155", marginTop: 0, fontWeight: 600 }}>
+                  {sharedViewData.forename} {sharedViewData.surname}
+                </p>
+              )}
+
               {sharedViewRecords.length === 0 ? (
                 <div
                   style={{
@@ -687,11 +796,11 @@ export default function App() {
                       <strong style={{ display: "block", fontSize: 16 }}>
                         {record.activity_title}
                       </strong>
-  
+
                       <div style={{ marginTop: 6, color: "#64748b", fontSize: 14 }}>
                         {record.cpd_type} • {record.date_completed || record.planned_for_date || "No date"} • {record.hours}h {record.minutes}m
                       </div>
-  
+
                       {record.outcome && (
                         <div style={{ marginTop: 10, lineHeight: 1.6 }}>
                           {record.outcome}
