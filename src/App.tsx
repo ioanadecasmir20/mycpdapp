@@ -418,6 +418,87 @@ const modalCardStyle: CSSProperties = {
 
 const publicShareBaseUrl = "https://mycpdapp.com/share";
 
+function getRecordMinutes(record: CPDRecord | any) {
+  return (Number(record.hours) || 0) * 60 + (Number(record.minutes) || 0);
+}
+
+function formatMinutesToHoursMins(totalMinutes: number) {
+  const safeMinutes = Math.max(0, Number(totalMinutes) || 0);
+  const hours = Math.floor(safeMinutes / 60);
+  const minutes = safeMinutes % 60;
+
+  if (hours === 0) return `${minutes} min`;
+  if (minutes === 0) return `${hours} hr${hours === 1 ? "" : "s"}`;
+  return `${hours} hr${hours === 1 ? "" : "s"} ${minutes} min`;
+}
+
+function getRecordRelevantDate(record: CPDRecord | any) {
+  return (
+    record.date_completed ||
+    record.planned_for_date ||
+    record.created_at ||
+    null
+  );
+}
+
+function getSharedViewPeriod(records: CPDRecord[] = [], sharedViewData?: any | null) {
+  if (!records.length) {
+    return {
+      from: sharedViewData?.filter_date_from || "",
+      to: sharedViewData?.filter_date_to || "",
+    };
+  }
+
+  const allDates = records
+    .map((record) => getRecordRelevantDate(record))
+    .filter(Boolean)
+    .sort((a, b) => new Date(a as string).getTime() - new Date(b as string).getTime());
+
+  const firstRecordDate = allDates[0] || "";
+  const lastRecordDate = allDates[allDates.length - 1] || "";
+
+  return {
+    from: sharedViewData?.filter_date_from || firstRecordDate,
+    to: sharedViewData?.filter_date_to || lastRecordDate,
+  };
+}
+
+function buildActiveSharedFilters(view: any, records: CPDRecord[] = []) {
+  if (!view) return [];
+
+  const filters: string[] = [];
+
+  if (view.search_query) filters.push(`Search: ${view.search_query}`);
+  if (view.filter_status && view.filter_status !== "all") {
+    filters.push(`Status: ${view.filter_status}`);
+  }
+  if (view.filter_type && view.filter_type !== "all") {
+    filters.push(`Type: ${view.filter_type}`);
+  }
+  if (view.filter_evidence && view.filter_evidence !== "all") {
+    filters.push(`Evidence: ${view.filter_evidence === "yes" ? "Yes" : "No"}`);
+  }
+  if (view.filter_learning_method && view.filter_learning_method !== "all") {
+    filters.push(`Method: ${view.filter_learning_method}`);
+  }
+  if (view.filter_certificate && view.filter_certificate !== "all") {
+    filters.push(`Certificate: ${view.filter_certificate === "yes" ? "Yes" : "No"}`);
+  }
+  if (view.filter_provider) filters.push(`Provider: ${view.filter_provider}`);
+  if (view.filter_sectors) filters.push(`Sectors: ${view.filter_sectors}`);
+  if (view.filter_min_minutes) filters.push(`Min duration: ${formatMinutesToHoursMins(Number(view.filter_min_minutes))}`);
+  if (view.filter_max_minutes) filters.push(`Max duration: ${formatMinutesToHoursMins(Number(view.filter_max_minutes))}`);
+
+  const period = getSharedViewPeriod(records, view);
+  if (period.from || period.to) {
+    filters.push(
+      `Period: ${period.from ? formatDateDMYBlank(period.from) : "Any"} - ${period.to ? formatDateDMYBlank(period.to) : "Any"}`
+    );
+  }
+
+  return filters;
+}
+
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -593,18 +674,17 @@ export default function App() {
         throw new Error("Shared view not found.");
       }
 
-      // fetch profile for full name
-      const { data: profile } = await supabase
+      let profileData: { forename?: string | null; surname?: string | null } | null = null;
+
+      const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("forename, surname")
         .eq("id", view.user_id)
         .single();
 
-      setSharedViewData({
-        ...view,
-        forename: profile?.forename || "",
-        surname: profile?.surname || "",
-      });
+      if (!profileError && profile) {
+        profileData = profile;
+      }
 
       let query = supabase
         .from("cpd_records")
@@ -651,9 +731,13 @@ export default function App() {
 
       if (view.sort_by === "oldest") {
         query = query.order("date_completed", { ascending: true, nullsFirst: false });
-      } else if (view.sort_by === "a-z") {
+      } else if (view.sort_by === "hoursHigh") {
+        query = query.order("hours", { ascending: false }).order("minutes", { ascending: false });
+      } else if (view.sort_by === "hoursLow") {
+        query = query.order("hours", { ascending: true }).order("minutes", { ascending: true });
+      } else if (view.sort_by === "titleAZ") {
         query = query.order("activity_title", { ascending: true });
-      } else if (view.sort_by === "z-a") {
+      } else if (view.sort_by === "titleZA") {
         query = query.order("activity_title", { ascending: false });
       } else {
         query = query.order("date_completed", { ascending: false, nullsFirst: false });
@@ -668,7 +752,7 @@ export default function App() {
       let filtered = records || [];
 
       if (view.search_query) {
-        const q = view.search_query.toLowerCase();
+        const q = String(view.search_query).toLowerCase();
         filtered = filtered.filter((record) =>
           [
             record.activity_title,
@@ -686,33 +770,44 @@ export default function App() {
 
       if (view.filter_min_minutes) {
         const min = Number(view.filter_min_minutes);
-        filtered = filtered.filter(
-          (record) => (record.hours || 0) * 60 + (record.minutes || 0) >= min
-        );
+        filtered = filtered.filter((record) => getRecordMinutes(record) >= min);
       }
 
       if (view.filter_max_minutes) {
         const max = Number(view.filter_max_minutes);
-        filtered = filtered.filter(
-          (record) => (record.hours || 0) * 60 + (record.minutes || 0) <= max
-        );
+        filtered = filtered.filter((record) => getRecordMinutes(record) <= max);
       }
 
       if (view.filter_sectors) {
-        const sectors = String(view.filter_sectors)
+        const wanted = String(view.filter_sectors)
           .split(",")
-          .map((s: string) => s.trim().toLowerCase())
+          .map((s) => s.trim().toLowerCase())
           .filter(Boolean);
 
-        if (sectors.length) {
+        if (wanted.length) {
           filtered = filtered.filter((record) => {
             const recordSectors = Array.isArray(record.sectors)
               ? record.sectors.map((s: string) => s.toLowerCase())
               : [];
-            return sectors.some((sector: string) => recordSectors.includes(sector));
+            return wanted.some((sector) => recordSectors.includes(sector));
           });
         }
       }
+
+      const totalMinutes = filtered.reduce((sum, record) => sum + getRecordMinutes(record), 0);
+      const period = getSharedViewPeriod(filtered, view);
+      const activeFilters = buildActiveSharedFilters(view, filtered);
+
+      setSharedViewData({
+        ...view,
+        forename: profileData?.forename || "",
+        surname: profileData?.surname || "",
+        totalMinutes,
+        totalHoursLabel: formatMinutesToHoursMins(totalMinutes),
+        periodFrom: period.from,
+        periodTo: period.to,
+        activeFilters,
+      });
 
       setSharedViewRecords(filtered);
     } catch (error: any) {
@@ -764,11 +859,120 @@ export default function App() {
                 Live shared CPD record
               </p>
 
-              {(sharedViewData?.forename || sharedViewData?.surname) && (
-                <p style={{ color: "#334155", marginTop: 0, fontWeight: 600 }}>
-                  {sharedViewData.forename} {sharedViewData.surname}
+              {!!`${sharedViewData?.forename || ""}${sharedViewData?.surname || ""}`.trim() && (
+                <p
+                  style={{
+                    marginTop: 0,
+                    marginBottom: 16,
+                    color: "#0f172a",
+                    fontWeight: 700,
+                    fontSize: 16,
+                  }}
+                >
+                  {sharedViewData?.forename} {sharedViewData?.surname}
                 </p>
               )}
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                  gap: 12,
+                  marginTop: 20,
+                  marginBottom: 20,
+                }}
+              >
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 14,
+                    padding: 14,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <div style={{ fontSize: 13, color: "#64748b", marginBottom: 6 }}>
+                    Records
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 800 }}>
+                    {sharedViewRecords.length}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 14,
+                    padding: 14,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <div style={{ fontSize: 13, color: "#64748b", marginBottom: 6 }}>
+                    Total hours
+                  </div>
+                  <div style={{ fontSize: 22, fontWeight: 800 }}>
+                    {sharedViewData?.totalHoursLabel || "0 min"}
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: 14,
+                    padding: 14,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <div style={{ fontSize: 13, color: "#64748b", marginBottom: 6 }}>
+                    Period
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.4 }}>
+                    {sharedViewData?.periodFrom
+                      ? formatDateDMYBlank(sharedViewData.periodFrom)
+                      : "—"}{" "}
+                    -{" "}
+                    {sharedViewData?.periodTo
+                      ? formatDateDMYBlank(sharedViewData.periodTo)
+                      : "—"}
+                  </div>
+                </div>
+              </div>
+
+              {Array.isArray(sharedViewData?.activeFilters) &&
+                sharedViewData.activeFilters.length > 0 && (
+                  <div style={{ marginBottom: 20 }}>
+                    <div
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 700,
+                        marginBottom: 10,
+                        color: "#334155",
+                      }}
+                    >
+                      Active filters
+                    </div>
+
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {sharedViewData.activeFilters.map((filterLabel: string, index: number) => (
+                        <span
+                          key={`${filterLabel}-${index}`}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            padding: "8px 12px",
+                            borderRadius: 999,
+                            background: "#eff6ff",
+                            color: "#1d4ed8",
+                            fontSize: 13,
+                            fontWeight: 700,
+                            border: "1px solid #bfdbfe",
+                          }}
+                        >
+                          {filterLabel}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
               {sharedViewRecords.length === 0 ? (
                 <div
