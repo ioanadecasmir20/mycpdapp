@@ -713,14 +713,6 @@ export default function App() {
     );
   }
 
-  if (isSharedRoute) {
-    return (
-      <div style={{ padding: 40, fontSize: 20 }}>
-        Shared route detected. Token: {shareToken || "none"}
-      </div>
-    );
-  }
-
   const filteredArticles = useMemo(() => {
     let result = [...articles];
 
