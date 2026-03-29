@@ -1392,6 +1392,18 @@ export default function App() {
     fetchArticles();
   }, [userRole, articlePreviewMode]);
 
+  function parseYMDToLocalDate(value?: string | null) {
+    if (!value) return null;
+  
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [year, month, day] = value.split("-").map(Number);
+      return new Date(year, month - 1, day);
+    }
+  
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
   function formatCalendarMonth(date: Date) {
     return date.toLocaleDateString("en-GB", {
       month: "long",
@@ -1419,7 +1431,7 @@ export default function App() {
       const cellDate = new Date(year, month, day);
       cells.push({
         date: cellDate,
-        key: cellDate.toISOString(),
+        key: `day-${toLocalYMD(cellDate)}`,
       });
     }
 
@@ -1430,8 +1442,11 @@ export default function App() {
     return cells;
   }
 
-  function toYMD(date: Date) {
-    return date.toISOString().slice(0, 10);
+  function toLocalYMD(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   }
 
   function resetArticleForm() {
@@ -1734,15 +1749,11 @@ export default function App() {
 
   function formatDateDMYBlank(dateString?: string | null) {
     if (!dateString) return "";
-
-    const d = new Date(dateString);
-
-    if (isNaN(d.getTime())) return String(dateString);
-
+    const d = parseYMDToLocalDate(dateString);
+    if (!d) return String(dateString);
     const day = String(d.getDate()).padStart(2, "0");
     const month = String(d.getMonth() + 1).padStart(2, "0");
     const year = d.getFullYear();
-
     return `${day}/${month}/${year}`;
   }
 
@@ -1935,15 +1946,11 @@ export default function App() {
 
   function formatDateDMY(dateString?: string | null) {
     if (!dateString) return "No date";
-
-    const d = new Date(dateString);
-
-    if (isNaN(d.getTime())) return String(dateString);
-
+    const d = parseYMDToLocalDate(dateString);
+    if (!d) return String(dateString);
     const day = String(d.getDate()).padStart(2, "0");
     const month = String(d.getMonth() + 1).padStart(2, "0");
     const year = d.getFullYear();
-
     return `${day}/${month}/${year}`;
   }
 
@@ -4339,10 +4346,10 @@ export default function App() {
                               return <div key={cell.key} />;
                             }
 
-                            const ymd = toYMD(cell.date);
+                            const ymd = toLocalYMD(cell.date);
                             const hasPlanned = !!plannedByDate[ymd]?.length;
                             const isSelected = selectedCalendarDate === ymd;
-                            const isToday = ymd === new Date().toISOString().slice(0, 10);
+                            const isToday = ymd === toLocalYMD(new Date());
 
                             return (
                               <button
@@ -4496,7 +4503,7 @@ export default function App() {
                       {plannedRecords.slice(0, 5).map((record) => {
                         const isOverdue =
                           record.planned_for_date &&
-                          record.planned_for_date < new Date().toISOString().slice(0, 10);
+                          record.planned_for_date < toLocalYMD(new Date());
 
                         return (
                           <div
