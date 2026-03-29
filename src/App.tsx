@@ -605,11 +605,6 @@ export default function App() {
         .select("*")
         .eq("user_id", view.user_id);
   
-      if (view.search_query) {
-        const q = view.search_query.toLowerCase();
-        // search filtering can be applied client-side after fetch if easier
-      }
-  
       const { data: records, error: recordsError } = await query;
   
       if (recordsError) {
