@@ -987,29 +987,245 @@ export default function App() {
                   No records available in this shared view.
                 </div>
               ) : (
-                <div style={{ display: "grid", gap: 12, marginTop: 20 }}>
+                <div style={{ display: "grid", gap: 16 }}>
                   {sharedViewRecords.map((record) => (
                     <div
                       key={record.id}
                       style={{
+                        background: "#ffffff",
                         border: "1px solid #e2e8f0",
-                        borderRadius: 14,
-                        padding: 16,
+                        borderRadius: 18,
+                        padding: 18,
+                        boxShadow: "0 10px 24px rgba(15, 23, 42, 0.05)",
                       }}
                     >
-                      <strong style={{ display: "block", fontSize: 16 }}>
-                        {record.activity_title}
-                      </strong>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                          gap: 12,
+                          flexWrap: "wrap",
+                          marginBottom: 14,
+                        }}
+                      >
+                        <div>
+                          <h3 style={{ margin: 0, fontSize: 20, color: "#0f172a" }}>
+                            {record.activity_title || "Untitled activity"}
+                          </h3>
 
-                      <div style={{ marginTop: 6, color: "#64748b", fontSize: 14 }}>
-                        {record.cpd_type} • {record.date_completed || record.planned_for_date || "No date"} • {record.hours}h {record.minutes}m
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 8,
+                              marginTop: 10,
+                            }}
+                          >
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                padding: "6px 10px",
+                                borderRadius: 999,
+                                background: "#eff6ff",
+                                color: "#1d4ed8",
+                                fontSize: 12,
+                                fontWeight: 700,
+                                border: "1px solid #bfdbfe",
+                              }}
+                            >
+                              {record.cpd_type || "Not set"}
+                            </span>
+
+                            <span style={getStatusChipStyle(record.status || "Planned")}>
+                              {record.status || "Planned"}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            minWidth: 120,
+                            textAlign: "right",
+                          }}
+                        >
+                          <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>
+                            Duration
+                          </div>
+                          <div style={{ fontWeight: 800, fontSize: 18, color: "#0f172a" }}>
+                            {formatMinutesToHoursMins(
+                              (Number(record.hours) || 0) * 60 + (Number(record.minutes) || 0)
+                            )}
+                          </div>
+                        </div>
                       </div>
 
-                      {record.outcome && (
-                        <div style={{ marginTop: 10, lineHeight: 1.6 }}>
-                          {record.outcome}
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                          gap: 12,
+                          marginBottom: 16,
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Date completed
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {formatDateDMYBlank(record.date_completed)}
+                          </div>
                         </div>
-                      )}
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Planned for
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {formatDateDMYBlank(record.planned_for_date)}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Expiry date
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {formatDateDMYBlank(record.expiry_date)}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Renewal required
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {record.renewal_required ? "Yes" : "No"}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Provider
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {record.provider || "—"}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Learning method
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {record.learning_method || "—"}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Sectors
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {Array.isArray(record.sectors) && record.sectors.length
+                              ? record.sectors.join(", ")
+                              : "—"}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Evidence available
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {record.evidence_available ? "Yes" : "No"}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Created
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {formatDateDMYBlank(record.created_at)}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+                            Updated
+                          </div>
+                          <div style={{ fontWeight: 600 }}>
+                            {formatDateDMYBlank(record.updated_at)}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gap: 14 }}>
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
+                            Description
+                          </div>
+                          <div
+                            style={{
+                              background: "#f8fafc",
+                              border: "1px solid #e2e8f0",
+                              borderRadius: 14,
+                              padding: 12,
+                              whiteSpace: "pre-wrap",
+                              lineHeight: 1.5,
+                              color: "#0f172a",
+                            }}
+                          >
+                            {record.description || "—"}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
+                            Outcome
+                          </div>
+                          <div
+                            style={{
+                              background: "#f8fafc",
+                              border: "1px solid #e2e8f0",
+                              borderRadius: 14,
+                              padding: 12,
+                              whiteSpace: "pre-wrap",
+                              lineHeight: 1.5,
+                              color: "#0f172a",
+                            }}
+                          >
+                            {record.outcome || "—"}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
+                            Certificate / file
+                          </div>
+                          {record.certificate_file_url ? (
+                            <a
+                              href={record.certificate_file_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 8,
+                                color: "#2563eb",
+                                fontWeight: 700,
+                                textDecoration: "none",
+                              }}
+                            >
+                              Open certificate
+                            </a>
+                          ) : (
+                            <div style={{ color: "#0f172a" }}>—</div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
