@@ -10,9 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.0",
     "@capacitor/cli": "^7.6.0",
     "@capacitor/core": "^8.2.0",
     "@capacitor/ios": "^8.2.0",
+    "@capacitor/share": "^8.0.1",
+    "@capgo/native-purchases": "^8.3.0",
     "@supabase/supabase-js": "^2.100.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
