@@ -26,6 +26,15 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
 
+import { Capacitor } from "@capacitor/core";
+import { App as CapacitorApp } from "@capacitor/app";
+import {
+  NativePurchases,
+  PURCHASE_TYPE,
+} from "@capgo/native-purchases";
+
+import { Share } from "@capacitor/share";
+
 type CPDRecord = {
   id: string;
   user_id: string;
@@ -86,7 +95,6 @@ const emptyForm: FormState = {
 };
 
 const cpdTypes = [
-  "",
   "Course",
   "Webinar",
   "Workshop",
@@ -101,7 +109,6 @@ const cpdTypes = [
 ];
 
 const learningMethods = [
-  "",
   "Online",
   "In Person",
   "Hybrid",
@@ -417,6 +424,7 @@ const modalCardStyle: CSSProperties = {
 };
 
 const publicShareBaseUrl = "https://mycpdapp.com/share";
+const PREMIUM_PRODUCT_ID = "com.mycpdapp.premium.yearly";
 
 function getRecordMinutes(record: CPDRecord | any) {
   return (Number(record.hours) || 0) * 60 + (Number(record.minutes) || 0);
@@ -497,6 +505,13 @@ function buildActiveSharedFilters(view: any, records: CPDRecord[] = []) {
   }
 
   return filters;
+}
+
+function hasValue(value: any) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim() !== "";
+  if (Array.isArray(value)) return value.length > 0;
+  return true;
 }
 
 export default function App() {
@@ -687,9 +702,183 @@ export default function App() {
     lineHeight: 1.2,
   };
 
+  const [premiumProduct, setPremiumProduct] = useState<any | null>(null);
+  const [purchaseBusy, setPurchaseBusy] = useState(false);
+  const [purchaseMessage, setPurchaseMessage] = useState("");
+
+  const [profileLoaded, setProfileLoaded] = useState(false);
+
+  async function downloadTemplate() {
+    const { data } = supabase.storage
+      .from("app-files")
+      .getPublicUrl("templates/cpd-template.xlsx");
+
+    const fileUrl = data.publicUrl;
+
+    if (Capacitor.getPlatform() === "ios") {
+      await Share.share({
+        title: "CPD Template",
+        text: "Download CPD template",
+        url: fileUrl,
+      });
+      return;
+    }
+
+    const link = document.createElement("a");
+    link.href = fileUrl;
+    link.setAttribute("download", "cpd-template.xlsx");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
   function requirePremium(reason: string) {
     setPremiumReason(reason);
     setShowPremiumPopup(true);
+  }
+
+  async function updateProfileRole(role: "member" | "premium_member") {
+    if (!session?.user?.id) return;
+
+    const { data: currentProfile, error: currentProfileError } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", session.user.id)
+      .single();
+
+    if (currentProfileError) {
+      console.error("Failed to read current role:", currentProfileError);
+      return;
+    }
+
+    if (currentProfile?.role === "admin") {
+      setUserRole("admin");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("profiles")
+      .update({ role })
+      .eq("id", session.user.id);
+
+    if (error) {
+      console.error("Failed to update role:", error);
+      return;
+    }
+
+    setUserRole(role);
+  }
+
+  async function loadPremiumProduct() {
+    try {
+      const { products } = await NativePurchases.getProducts({
+        productIdentifiers: [PREMIUM_PRODUCT_ID],
+        productType: PURCHASE_TYPE.SUBS,
+      });
+
+      setPremiumProduct(products?.[0] ?? null);
+    } catch (error) {
+      console.error("Failed to load premium product:", error);
+      setPremiumProduct(null);
+    }
+  }
+
+  async function syncPremiumRoleFromStore() {
+    if (!session?.user?.id) return;
+    if (!profileLoaded) return;
+    if (Capacitor.getPlatform() !== "ios") return;
+
+    // Never touch admin accounts
+    if (userRole === "admin") return;
+
+    // Only sync/downgrade accounts that are already premium
+    // New/free users should keep their DB role unless they buy or restore
+    if (userRole !== "premium_member") return;
+
+    try {
+      const { purchases } = await NativePurchases.getPurchases({
+        productType: PURCHASE_TYPE.SUBS,
+      });
+
+      const premiumPurchase = (purchases || []).find((purchase: any) => {
+        if (purchase.productIdentifier !== PREMIUM_PRODUCT_ID) return false;
+        if (purchase.isActive === false) return false;
+
+        if (purchase.expirationDate) {
+          const expiry = new Date(purchase.expirationDate);
+          if (expiry <= new Date()) return false;
+        }
+
+        return true;
+      });
+
+      if (premiumPurchase) {
+        await updateProfileRole("premium_member");
+      } else {
+        await updateProfileRole("member");
+      }
+    } catch (error) {
+      console.error("Failed to sync premium role:", error);
+    }
+  }
+
+  async function handleUpgradeToPremium() {
+    if (!session?.user?.id) return;
+
+    setPurchaseBusy(true);
+    setPurchaseMessage("");
+
+    try {
+      setShowPremiumPopup(false);
+
+      await NativePurchases.purchaseProduct({
+        productIdentifier: PREMIUM_PRODUCT_ID,
+        productType: PURCHASE_TYPE.SUBS,
+      });
+
+      await syncPremiumRoleFromStore();
+      await fetchProfile(session.user.id);
+
+      setPurchaseMessage("Premium activated successfully.");
+    } catch (error: any) {
+      console.error("Purchase failed:", error);
+      setPurchaseMessage(error?.message || "Purchase failed.");
+    } finally {
+      setPurchaseBusy(false);
+    }
+  }
+
+  async function handleRestorePurchases() {
+    if (!session?.user?.id) return;
+
+    setPurchaseBusy(true);
+    setPurchaseMessage("");
+
+    try {
+      await NativePurchases.restorePurchases();
+      await syncPremiumRoleFromStore();
+      await fetchProfile(session.user.id);
+
+      setPurchaseMessage("Purchases restored.");
+    } catch (error: any) {
+      console.error("Restore failed:", error);
+      setPurchaseMessage(error?.message || "Restore failed.");
+    } finally {
+      setPurchaseBusy(false);
+    }
+  }
+
+  function renderSharedField(label: string, value: React.ReactNode) {
+    if (!hasValue(value)) return null;
+
+    return (
+      <div>
+        <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
+          {label}
+        </div>
+        <div style={{ fontWeight: 600 }}>{value}</div>
+      </div>
+    );
   }
 
   async function fetchPublicSharedView(token: string) {
@@ -851,6 +1040,43 @@ export default function App() {
       setSharedViewLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (session?.user?.id) {
+      setActiveTab("dashboard");
+      setShowAddPage(false);
+      setShowAddArticlePage(false);
+      setSelectedRecord(null);
+      setSelectedArticle(null);
+    } else {
+      setActiveTab("dashboard");
+    }
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    if (!profileLoaded) return;
+    if (Capacitor.getPlatform() !== "ios") return;
+
+    loadPremiumProduct();
+
+    if (userRole === "premium_member") {
+      syncPremiumRoleFromStore();
+    }
+  }, [session?.user?.id, profileLoaded, userRole]);
+
+  useEffect(() => {
+    const listener = CapacitorApp.addListener("appStateChange", async ({ isActive }) => {
+      if (isActive && session?.user?.id && Capacitor.getPlatform() === "ios") {
+        await syncPremiumRoleFromStore();
+        await fetchProfile(session.user.id);
+      }
+    });
+
+    return () => {
+      listener.then((l) => l.remove());
+    };
+  }, [session?.user?.id, userRole]);
 
   useEffect(() => {
     if (isSharedRoute && shareToken) {
@@ -1104,137 +1330,75 @@ export default function App() {
                           marginBottom: 16,
                         }}
                       >
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Date completed
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {formatDateDMYBlank(record.date_completed)}
-                          </div>
-                        </div>
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Planned for
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {formatDateDMYBlank(record.planned_for_date)}
-                          </div>
-                        </div>
+                        {renderSharedField("Date completed", formatDateDMYBlank(record.date_completed))}
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Expiry date
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {formatDateDMYBlank(record.expiry_date)}
-                          </div>
-                        </div>
+                        {renderSharedField("Planned for", formatDateDMYBlank(record.planned_for_date))}
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Renewal required
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {record.renewal_required ? "Yes" : "No"}
-                          </div>
-                        </div>
+                        {renderSharedField("Expiry date", formatDateDMYBlank(record.expiry_date))}
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Provider
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {record.provider || "—"}
-                          </div>
-                        </div>
+                        {record.renewal_required &&
+                          renderSharedField("Renewal required", "Yes")}
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Learning method
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {record.learning_method || "—"}
-                          </div>
-                        </div>
+                        {renderSharedField("Provider", record.provider || "—")}
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Sectors
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {Array.isArray(record.sectors) && record.sectors.length
-                              ? record.sectors.join(", ")
-                              : "—"}
-                          </div>
-                        </div>
+                        {renderSharedField("Learning method", record.learning_method || "—")}
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Evidence available
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {record.evidence_available ? "Yes" : "No"}
-                          </div>
-                        </div>
+                        {renderSharedField("Sectors", Array.isArray(record.sectors) && record.sectors.length
+                          ? record.sectors.join(", ")
+                          : "—")}
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Created
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {formatDateDMYBlank(record.created_at)}
-                          </div>
-                        </div>
+                        {record.evidence_available &&
+                          renderSharedField("Evidence available", "Yes")}
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>
-                            Updated
-                          </div>
-                          <div style={{ fontWeight: 600 }}>
-                            {formatDateDMYBlank(record.updated_at)}
-                          </div>
-                        </div>
+                        {renderSharedField("Created", formatDateDMYBlank(record.created_at))}
+
+                        {renderSharedField("Updated", formatDateDMYBlank(record.updated_at))}
+
                       </div>
 
                       <div style={{ display: "grid", gap: 14 }}>
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
-                            Description
+                        {hasValue(record.description) && (
+                          <div>
+                            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
+                              Description
+                            </div>
+                            <div
+                              style={{
+                                background: "#f8fafc",
+                                border: "1px solid #e2e8f0",
+                                borderRadius: 14,
+                                padding: 12,
+                                whiteSpace: "pre-wrap",
+                                lineHeight: 1.5,
+                                color: "#0f172a",
+                              }}
+                            >
+                              {record.description}
+                            </div>
                           </div>
-                          <div
-                            style={{
-                              background: "#f8fafc",
-                              border: "1px solid #e2e8f0",
-                              borderRadius: 14,
-                              padding: 12,
-                              whiteSpace: "pre-wrap",
-                              lineHeight: 1.5,
-                              color: "#0f172a",
-                            }}
-                          >
-                            {record.description || "—"}
-                          </div>
-                        </div>
+                        )}
 
-                        <div>
-                          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
-                            Outcome
+                        {hasValue(record.description) && (
+                          <div>
+                            <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
+                              Outcome
+                            </div>
+                            <div
+                              style={{
+                                background: "#f8fafc",
+                                border: "1px solid #e2e8f0",
+                                borderRadius: 14,
+                                padding: 12,
+                                whiteSpace: "pre-wrap",
+                                lineHeight: 1.5,
+                                color: "#0f172a",
+                              }}
+                            >
+                              {record.outcome || "—"}
+                            </div>
                           </div>
-                          <div
-                            style={{
-                              background: "#f8fafc",
-                              border: "1px solid #e2e8f0",
-                              borderRadius: 14,
-                              padding: 12,
-                              whiteSpace: "pre-wrap",
-                              lineHeight: 1.5,
-                              color: "#0f172a",
-                            }}
-                          >
-                            {record.outcome || "—"}
-                          </div>
-                        </div>
+                        )}
 
                         <div>
                           <div style={{ fontSize: 12, color: "#64748b", marginBottom: 6 }}>
@@ -1793,6 +1957,8 @@ export default function App() {
   }
 
   async function fetchProfile(userId: string) {
+    setProfileLoaded(false);
+
     const { data, error } = await supabase
       .from("profiles")
       .select("forename, surname, main_job_role, secondary_job_role, role")
@@ -1806,6 +1972,8 @@ export default function App() {
       setSecondaryJobRole(data.secondary_job_role ?? "");
       setUserRole((data.role as "admin" | "member" | "premium_member") || "member");
     }
+
+    setProfileLoaded(true);
   }
 
   async function fetchArticles() {
@@ -2092,6 +2260,9 @@ export default function App() {
     } catch (error: any) {
       setAuthMessage(error.message || "Something went wrong.");
     }
+    setPassword("");
+    setConfirmPassword("");
+    setIsSignup(false);
   }
 
   async function fetchGoals(userId: string) {
@@ -2332,79 +2503,6 @@ export default function App() {
     }
   }
 
-  function downloadImportTemplate() {
-    const templateHeaders = [[
-      "Activity Title",
-      "CPD Type",
-      "Status",
-      "Date Completed",
-      "Planned For Date",
-      "Expiry Date",
-      "Renewal Required",
-      "Hours",
-      "Minutes",
-      "Provider",
-      "Learning Method",
-      "Sectors",
-      "Description",
-      "Outcome",
-      "Evidence Available",
-    ]];
-
-    const exampleRow = [[
-      "First Aid Refresher",
-      "Course",
-      "Completed",
-      "26/03/2026",
-      "",
-      "26/03/2027",
-      "Yes",
-      6,
-      0,
-      "ABC Training",
-      "In Person",
-      "Security, First Aid",
-      "Annual refresher",
-      "Updated skills",
-      "Yes",
-    ]];
-
-    const guidanceRows = [
-      ["Field", "Guidance / Allowed Values"],
-      ["Activity Title", "Required"],
-      ["CPD Type", allowedImportCpdTypes.join(", ")],
-      ["Status", allowedImportStatuses.join(", ")],
-      ["Date Completed", "Use dd/mm/yyyy. Required if Status = Completed"],
-      ["Planned For Date", "Use dd/mm/yyyy. Required if Status = Planned"],
-      ["Expiry Date", "Use dd/mm/yyyy. Required if Renewal Required = Yes"],
-      ["Renewal Required", "Yes or No"],
-      ["Hours", "Number, 0 or more"],
-      ["Minutes", "Number, 0 to 59"],
-      ["Provider", "Optional"],
-      ["Learning Method", allowedImportLearningMethods.join(", ")],
-      ["Sectors", "Optional. Separate multiple sectors with commas"],
-      ["Description", "Optional"],
-      ["Outcome", "Optional"],
-      ["Evidence Available", "Yes or No"],
-      ["Rules", "Completed requires Date Completed"],
-      ["Rules", "Planned requires Planned For Date"],
-      ["Rules", "Renewal Required = Yes requires Expiry Date"],
-    ];
-
-    const templateSheet = XLSX.utils.aoa_to_sheet([
-      ...templateHeaders,
-      ...exampleRow,
-    ]);
-
-    const guidanceSheet = XLSX.utils.aoa_to_sheet(guidanceRows);
-
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, templateSheet, "CPD Import Template");
-    XLSX.utils.book_append_sheet(workbook, guidanceSheet, "Guidance");
-
-    XLSX.writeFile(workbook, "mycpd-import-template.xlsx");
-  }
-
   function normaliseImportedDate(value: any) {
     if (!value) return null;
 
@@ -2483,7 +2581,7 @@ export default function App() {
       const validRowsCount = importRows.filter(
         (row) => String(row["Activity Title"] || "").trim()
       ).length;
-    
+
       if (records.length + validRowsCount > 50) {
         requirePremium(
           "Free members can store up to 50 CPD records. Upgrade to Premium for unlimited records and bulk upload."
@@ -2954,6 +3052,34 @@ export default function App() {
   }, []);
 
   async function handleLogout() {
+    resetForm();
+    resetGoalForm();
+    setSelectedRecord(null);
+    setSelectedArticle(null);
+    setShowAddPage(false);
+    setShowAddArticlePage(false);
+    setArticlePreviewMode(false);
+    setShowPremiumPopup(false);
+    setPremiumReason("");
+    setPurchaseMessage("");
+    setSearchQuery("");
+    setArticleSearchQuery("");
+    setSortBy("newest");
+    setArticleSortBy("newest");
+    clearAllFilters();
+    setShareTitle("");
+    setShareMessage("");
+    setSelectedIds([]);
+    setEditingId(null);
+    setEditingGoalId(null);
+    setEditingArticleId(null);
+    setActiveTab("dashboard");
+
+    setEmail("");
+    setPassword("");
+    setConfirmPassword("");
+    setIsSignup(false);
+
     await supabase.auth.signOut();
   }
 
@@ -3467,15 +3593,6 @@ export default function App() {
                   value={secondaryJobRole}
                   onChange={(e) => setSecondaryJobRole(e.target.value)}
                 />
-
-                <input
-                  style={inputStyle}
-                  type="password"
-                  placeholder="Re-enter password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required={isSignup}
-                />
               </>
             )}
 
@@ -3496,6 +3613,18 @@ export default function App() {
               onChange={(e) => setPassword(e.target.value)}
               required
             />
+
+            {isSignup && (
+              <>
+                <input
+                  style={inputStyle}
+                  type="password"
+                  placeholder="Re-enter password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required={isSignup}
+                />
+              </>)}
 
             {authMessage && (
               <div
@@ -3980,7 +4109,7 @@ export default function App() {
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
                   <button
                     type="button"
-                    onClick={downloadImportTemplate}
+                    onClick={downloadTemplate}
                     style={secondaryButtonStyle}
                   >
                     Download template
@@ -4736,7 +4865,6 @@ export default function App() {
                               >
                                 {record.cpd_type} •{" "}
                                 {record.date_completed ? formatDateDMY(record.date_completed) : "No date"} • {record.hours}h {record.minutes}m
-                                h {record.minutes}m
                               </div>
                             </div>
                             <span style={getStatusChipStyle(record.status)}>
@@ -5062,6 +5190,10 @@ export default function App() {
                                 marginBottom: 6,
                               }}
                             >
+                              <span style={getStatusChipStyle(record.status)}>
+                                {record.status}
+                              </span>
+
                               <span
                                 style={{
                                   fontSize: 13,
@@ -7110,12 +7242,22 @@ export default function App() {
                 <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
                   <button
                     style={primaryButtonStyle}
-                    onClick={() => {
-                      setShowPremiumPopup(false);
-                      // later connect this to your Apple paywall
-                    }}
+                    onClick={handleUpgradeToPremium}
+                    disabled={purchaseBusy || !premiumProduct}
                   >
-                    Upgrade to Premium
+                    {purchaseBusy
+                      ? "Please wait..."
+                      : premiumProduct
+                        ? `Upgrade to Premium • ${premiumProduct.priceString}`
+                        : "Loading price..."}
+                  </button>
+
+                  <button
+                    style={secondaryButtonStyle}
+                    onClick={handleRestorePurchases}
+                    disabled={purchaseBusy}
+                  >
+                    Restore Purchases
                   </button>
 
                   <button
@@ -7124,6 +7266,11 @@ export default function App() {
                   >
                     Maybe later
                   </button>
+                  {purchaseMessage && (
+                    <p style={{ marginTop: 12, color: theme.colors.subtext }}>
+                      {purchaseMessage}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
