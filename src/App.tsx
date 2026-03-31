@@ -33,8 +33,6 @@ import {
   PURCHASE_TYPE,
 } from "@capgo/native-purchases";
 
-import { Share } from "@capacitor/share";
-
 type CPDRecord = {
   id: string;
   user_id: string;
@@ -708,30 +706,6 @@ export default function App() {
 
   const [profileLoaded, setProfileLoaded] = useState(false);
 
-  async function downloadTemplate() {
-    const { data } = supabase.storage
-      .from("app-files")
-      .getPublicUrl("templates/cpd-template.xlsx");
-
-    const fileUrl = data.publicUrl;
-
-    if (Capacitor.getPlatform() === "ios") {
-      await Share.share({
-        title: "CPD Template",
-        text: "Download CPD template",
-        url: fileUrl,
-      });
-      return;
-    }
-
-    const link = document.createElement("a");
-    link.href = fileUrl;
-    link.setAttribute("download", "cpd-template.xlsx");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }
-
   function requirePremium(reason: string) {
     setPremiumReason(reason);
     setShowPremiumPopup(true);
@@ -822,6 +796,37 @@ export default function App() {
     }
   }
 
+  async function syncPremiumRoleFromStoreAfterPurchase() {
+    if (!session?.user?.id) return;
+    if (!profileLoaded) return;
+    if (Capacitor.getPlatform() !== "ios") return;
+
+    try {
+      const { purchases } = await NativePurchases.getPurchases({
+        productType: PURCHASE_TYPE.SUBS,
+      });
+
+      const premiumPurchase = (purchases || []).find((purchase: any) => {
+        if (purchase.productIdentifier !== PREMIUM_PRODUCT_ID) return false;
+        if (purchase.isActive === false) return false;
+
+        if (purchase.expirationDate) {
+          const expiry = new Date(purchase.expirationDate);
+          if (expiry <= new Date()) return false;
+        }
+
+        return true;
+      });
+
+      if (premiumPurchase) {
+        await updateProfileRole("premium_member");
+        await fetchProfile(session.user.id);
+      }
+    } catch (error) {
+      console.error("Failed to sync premium role after purchase:", error);
+    }
+  }
+
   async function handleUpgradeToPremium() {
     if (!session?.user?.id) return;
 
@@ -836,10 +841,21 @@ export default function App() {
         productType: PURCHASE_TYPE.SUBS,
       });
 
-      await syncPremiumRoleFromStore();
-      await fetchProfile(session.user.id);
+      await new Promise((resolve) => setTimeout(resolve, 1200));
 
-      setPurchaseMessage("Premium activated successfully.");
+      await syncPremiumRoleFromStoreAfterPurchase();
+
+      const { data: updatedProfile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", session.user.id)
+        .single();
+
+      if (updatedProfile?.role === "premium_member") {
+        setPurchaseMessage("Premium activated successfully.");
+      } else {
+        setPurchaseMessage("Purchase completed, syncing premium access...");
+      }
     } catch (error: any) {
       console.error("Purchase failed:", error);
       setPurchaseMessage(error?.message || "Purchase failed.");
@@ -856,9 +872,8 @@ export default function App() {
 
     try {
       await NativePurchases.restorePurchases();
-      await syncPremiumRoleFromStore();
-      await fetchProfile(session.user.id);
-
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      await syncPremiumRoleFromStoreAfterPurchase();
       setPurchaseMessage("Purchases restored.");
     } catch (error: any) {
       console.error("Restore failed:", error);
@@ -4108,11 +4123,15 @@ export default function App() {
 
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
                   <button
-                    type="button"
-                    onClick={downloadTemplate}
+                    onClick={() => {
+                      const url =
+                        "https://cdldqmehwdrebusdmpuz.supabase.co/storage/v1/object/public/app-files/templates/cpd-template.xlsx";
+
+                      window.open(url, "_blank");
+                    }}
                     style={secondaryButtonStyle}
                   >
-                    Download template
+                    Download Template
                   </button>
 
                   <label
