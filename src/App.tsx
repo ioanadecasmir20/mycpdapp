@@ -711,38 +711,6 @@ export default function App() {
     setShowPremiumPopup(true);
   }
 
-  async function updateProfileRole(role: "member" | "premium_member") {
-    if (!session?.user?.id) return;
-
-    const { data: currentProfile, error: currentProfileError } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", session.user.id)
-      .single();
-
-    if (currentProfileError) {
-      console.error("Failed to read current role:", currentProfileError);
-      return;
-    }
-
-    if (currentProfile?.role === "admin") {
-      setUserRole("admin");
-      return;
-    }
-
-    const { error } = await supabase
-      .from("profiles")
-      .update({ role })
-      .eq("id", session.user.id);
-
-    if (error) {
-      console.error("Failed to update role:", error);
-      return;
-    }
-
-    setUserRole(role);
-  }
-
   async function loadPremiumProduct() {
     try {
       const { products } = await NativePurchases.getProducts({
@@ -757,19 +725,28 @@ export default function App() {
     }
   }
 
-  async function syncPremiumRoleFromStore() {
+  async function syncRoleFromStore() {
     if (!session?.user?.id) return;
     if (!profileLoaded) return;
     if (Capacitor.getPlatform() !== "ios") return;
 
-    // Never touch admin accounts
-    if (userRole === "admin") return;
-
-    // Only sync/downgrade accounts that are already premium
-    // New/free users should keep their DB role unless they buy or restore
-    if (userRole !== "premium_member") return;
-
     try {
+      const { data: currentProfile, error: currentProfileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", session.user.id)
+        .single();
+
+      if (currentProfileError) {
+        console.error("Failed to read current profile role:", currentProfileError);
+        return;
+      }
+
+      if (currentProfile?.role === "admin") {
+        setUserRole("admin");
+        return;
+      }
+
       const { purchases } = await NativePurchases.getPurchases({
         productType: PURCHASE_TYPE.SUBS,
       });
@@ -786,44 +763,26 @@ export default function App() {
         return true;
       });
 
-      if (premiumPurchase) {
-        await updateProfileRole("premium_member");
-      } else {
-        await updateProfileRole("member");
-      }
-    } catch (error) {
-      console.error("Failed to sync premium role:", error);
-    }
-  }
+      const nextRole: "member" | "premium_member" = premiumPurchase
+        ? "premium_member"
+        : "member";
 
-  async function syncPremiumRoleFromStoreAfterPurchase() {
-    if (!session?.user?.id) return;
-    if (!profileLoaded) return;
-    if (Capacitor.getPlatform() !== "ios") return;
+      if (currentProfile?.role !== nextRole) {
+        const { error: updateError } = await supabase
+          .from("profiles")
+          .update({ role: nextRole })
+          .eq("id", session.user.id);
 
-    try {
-      const { purchases } = await NativePurchases.getPurchases({
-        productType: PURCHASE_TYPE.SUBS,
-      });
-
-      const premiumPurchase = (purchases || []).find((purchase: any) => {
-        if (purchase.productIdentifier !== PREMIUM_PRODUCT_ID) return false;
-        if (purchase.isActive === false) return false;
-
-        if (purchase.expirationDate) {
-          const expiry = new Date(purchase.expirationDate);
-          if (expiry <= new Date()) return false;
+        if (updateError) {
+          console.error("Failed to update role from store:", updateError);
+          return;
         }
-
-        return true;
-      });
-
-      if (premiumPurchase) {
-        await updateProfileRole("premium_member");
-        await fetchProfile(session.user.id);
       }
+
+      setUserRole(nextRole);
+      await fetchProfile(session.user.id);
     } catch (error) {
-      console.error("Failed to sync premium role after purchase:", error);
+      console.error("Failed to sync role from store:", error);
     }
   }
 
@@ -843,7 +802,7 @@ export default function App() {
 
       await new Promise((resolve) => setTimeout(resolve, 1200));
 
-      await syncPremiumRoleFromStoreAfterPurchase();
+      await syncRoleFromStore();
 
       const { data: updatedProfile } = await supabase
         .from("profiles")
@@ -873,7 +832,7 @@ export default function App() {
     try {
       await NativePurchases.restorePurchases();
       await new Promise((resolve) => setTimeout(resolve, 1200));
-      await syncPremiumRoleFromStoreAfterPurchase();
+      await syncRoleFromStore();
       setPurchaseMessage("Purchases restored.");
     } catch (error: any) {
       console.error("Restore failed:", error);
@@ -1076,14 +1035,14 @@ export default function App() {
     loadPremiumProduct();
 
     if (userRole === "premium_member") {
-      syncPremiumRoleFromStore();
+      syncRoleFromStore();
     }
   }, [session?.user?.id, profileLoaded, userRole]);
 
   useEffect(() => {
     const listener = CapacitorApp.addListener("appStateChange", async ({ isActive }) => {
       if (isActive && session?.user?.id && Capacitor.getPlatform() === "ios") {
-        await syncPremiumRoleFromStore();
+        await syncRoleFromStore();
         await fetchProfile(session.user.id);
       }
     });
@@ -1092,6 +1051,32 @@ export default function App() {
       listener.then((l) => l.remove());
     };
   }, [session?.user?.id, userRole]);
+
+  useEffect(() => {
+    const listener = CapacitorApp.addListener("appUrlOpen", async ({ url }) => {
+      if (!url) return;
+
+      if (url.startsWith("mycpd://reset-password")) {
+        const parsed = new URL(url);
+
+        const accessToken = parsed.searchParams.get("access_token");
+        const refreshToken = parsed.searchParams.get("refresh_token");
+
+        if (accessToken && refreshToken) {
+          await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+        }
+
+        setActiveTab("settings"); // or open your reset password screen/modal
+      }
+    });
+
+    return () => {
+      listener.then((l) => l.remove());
+    };
+  }, []);
 
   useEffect(() => {
     if (isSharedRoute && shareToken) {
@@ -1322,14 +1307,30 @@ export default function App() {
 
                         <div
                           style={{
-                            minWidth: 120,
+                            minWidth: 0,
+                            flexShrink: 0,
                             textAlign: "right",
+                            alignSelf: "flex-start",
                           }}
                         >
-                          <div style={{ fontSize: 13, color: "#64748b", marginBottom: 4 }}>
+                          <div
+                            style={{
+                              fontSize: 13,
+                              color: "#64748b",
+                              marginBottom: 4,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
                             Duration
                           </div>
-                          <div style={{ fontWeight: 800, fontSize: 18, color: "#0f172a" }}>
+                          <div
+                            style={{
+                              fontWeight: 800,
+                              fontSize: 18,
+                              color: "#0f172a",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
                             {formatMinutesToHoursMins(
                               (Number(record.hours) || 0) * 60 + (Number(record.minutes) || 0)
                             )}
@@ -1685,19 +1686,22 @@ export default function App() {
   }
 
   async function handleForgotPassword() {
-    setAuthMessage("");
-
     if (!email) {
-      setAuthMessage("Enter your email address first.");
+      setAuthMessage("Enter your email first.");
       return;
     }
 
+    const redirectTo =
+      Capacitor.getPlatform() === "ios"
+        ? "mycpd://reset-password"
+        : "https://mycpdapp.com/reset-password";
+
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin,
+      redirectTo,
     });
 
     if (error) {
-      setAuthMessage(error.message || "Failed to send reset email.");
+      setAuthMessage(error.message);
     } else {
       setAuthMessage("Password reset email sent.");
     }
@@ -3299,9 +3303,23 @@ export default function App() {
 
     if (!confirmed || !session?.user?.id) return;
 
-    setSettingsMessage(
-      "Account deletion usually needs a secure backend function. For now, you can delete the user's data manually in Supabase, or add a secure delete-account function next."
-    );
+    setSettingsLoading(true);
+    setSettingsMessage("");
+
+    try {
+      const { error } = await supabase.functions.invoke("delete-account", {
+        body: { userId: session.user.id },
+      });
+
+      if (error) throw error;
+
+      await supabase.auth.signOut();
+      setSettingsMessage("Your account has been deleted.");
+    } catch (error: any) {
+      setSettingsMessage(error.message || "Failed to delete account.");
+    } finally {
+      setSettingsLoading(false);
+    }
   }
 
   if (loading) {
