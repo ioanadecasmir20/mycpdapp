@@ -1031,19 +1031,15 @@ export default function App() {
     if (!session?.user?.id) return;
     if (!profileLoaded) return;
     if (Capacitor.getPlatform() !== "ios") return;
-
+  
     loadPremiumProduct();
-
-    if (userRole === "premium_member") {
-      syncRoleFromStore();
-    }
-  }, [session?.user?.id, profileLoaded, userRole]);
+    syncRoleFromStore();
+  }, [session?.user?.id, profileLoaded]);
 
   useEffect(() => {
     const listener = CapacitorApp.addListener("appStateChange", async ({ isActive }) => {
       if (isActive && session?.user?.id && Capacitor.getPlatform() === "ios") {
         await syncRoleFromStore();
-        await fetchProfile(session.user.id);
       }
     });
 
@@ -1690,18 +1686,13 @@ export default function App() {
       setAuthMessage("Enter your email first.");
       return;
     }
-
-    const redirectTo =
-      Capacitor.getPlatform() === "ios"
-        ? "mycpd://reset-password"
-        : "https://mycpdapp.com/reset-password";
-
+  
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo,
+      redirectTo: "https://mycpdapp.com/reset-password",
     });
-
+  
     if (error) {
-      setAuthMessage(error.message);
+      setAuthMessage(error.message || "Failed to send reset email.");
     } else {
       setAuthMessage("Password reset email sent.");
     }
@@ -3300,19 +3291,19 @@ export default function App() {
     const confirmed = window.confirm(
       "Are you sure you want to delete your account? This cannot be undone."
     );
-
+  
     if (!confirmed || !session?.user?.id) return;
-
+  
     setSettingsLoading(true);
     setSettingsMessage("");
-
+  
     try {
       const { error } = await supabase.functions.invoke("delete-account", {
         body: { userId: session.user.id },
       });
-
+  
       if (error) throw error;
-
+  
       await supabase.auth.signOut();
       setSettingsMessage("Your account has been deleted.");
     } catch (error: any) {
