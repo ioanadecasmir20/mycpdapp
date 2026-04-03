@@ -706,6 +706,8 @@ export default function App() {
 
   const [profileLoaded, setProfileLoaded] = useState(false);
 
+  const [subscriptionCheckedThisLogin, setSubscriptionCheckedThisLogin] = useState(false);
+
   function requirePremium(reason: string) {
     setPremiumReason(reason);
     setShowPremiumPopup(true);
@@ -780,7 +782,7 @@ export default function App() {
       }
 
       setUserRole(nextRole);
-      await fetchProfile(session.user.id);
+      
     } catch (error) {
       console.error("Failed to sync role from store:", error);
     }
@@ -1016,6 +1018,12 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!session?.user?.id) {
+      setSubscriptionCheckedThisLogin(false);
+    }
+  }, [session?.user?.id]);
+
+  useEffect(() => {
     if (session?.user?.id) {
       setActiveTab("dashboard");
       setShowAddPage(false);
@@ -1031,22 +1039,16 @@ export default function App() {
     if (!session?.user?.id) return;
     if (!profileLoaded) return;
     if (Capacitor.getPlatform() !== "ios") return;
+    if (subscriptionCheckedThisLogin) return;
   
-    loadPremiumProduct();
-    syncRoleFromStore();
-  }, [session?.user?.id, profileLoaded]);
-
-  useEffect(() => {
-    const listener = CapacitorApp.addListener("appStateChange", async ({ isActive }) => {
-      if (isActive && session?.user?.id && Capacitor.getPlatform() === "ios") {
-        await syncRoleFromStore();
-      }
-    });
-
-    return () => {
-      listener.then((l) => l.remove());
+    const run = async () => {
+      await loadPremiumProduct();
+      await syncRoleFromStore();
+      setSubscriptionCheckedThisLogin(true);
     };
-  }, [session?.user?.id, userRole]);
+  
+    run();
+  }, [session?.user?.id, profileLoaded, subscriptionCheckedThisLogin]);
 
   useEffect(() => {
     const listener = CapacitorApp.addListener("appUrlOpen", async ({ url }) => {
@@ -1065,7 +1067,7 @@ export default function App() {
           });
         }
 
-        setActiveTab("settings"); // or open your reset password screen/modal
+        setActiveTab("settings");
       }
     });
 
@@ -3298,8 +3300,19 @@ export default function App() {
     setSettingsMessage("");
   
     try {
+      const {
+        data: { session: currentSession },
+      } = await supabase.auth.getSession();
+  
+      const accessToken = currentSession?.access_token;
+  
       const { error } = await supabase.functions.invoke("delete-account", {
         body: { userId: session.user.id },
+        headers: accessToken
+          ? {
+              Authorization: `Bearer ${accessToken}`,
+            }
+          : undefined,
       });
   
       if (error) throw error;
@@ -3307,7 +3320,15 @@ export default function App() {
       await supabase.auth.signOut();
       setSettingsMessage("Your account has been deleted.");
     } catch (error: any) {
-      setSettingsMessage(error.message || "Failed to delete account.");
+      console.error("Delete account error:", error);
+  
+      const serverMessage =
+        error?.context?.json?.error ||
+        error?.context?.json?.details ||
+        error?.message ||
+        "Failed to delete account.";
+  
+      setSettingsMessage(serverMessage);
     } finally {
       setSettingsLoading(false);
     }
