@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MyCPD Support</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --danger: #dc2626;
+      --shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+      --radius: 22px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(180deg, #eef4ff 0%, #f8fbff 50%, var(--bg) 100%);
+      color: var(--text);
+    }
+
+    .container {
+      width: min(100%, 1000px);
+      margin: 0 auto;
+      padding: 24px 16px 60px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: #fff;
+      border-radius: 28px;
+      padding: 36px 24px;
+      box-shadow: var(--shadow);
+      margin-bottom: 24px;
+    }
+
+    .hero h1 {
+      margin: 0 0 10px;
+      font-size: 2rem;
+      line-height: 1.1;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 700px;
+      font-size: 1rem;
+      line-height: 1.6;
+      color: rgba(255, 255, 255, 0.92);
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 22px 18px;
+      margin-bottom: 18px;
+    }
+
+    .card h2 {
+      margin: 0 0 14px;
+      font-size: 1.3rem;
+    }
+
+    .card p,
+    .card li {
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 0.98rem;
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    @media (min-width: 768px) {
+      .grid.two {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .contact-box {
+      display: grid;
+      gap: 10px;
+    }
+
+    .contact-item {
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: #f8fafc;
+    }
+
+    .contact-item strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--text);
+    }
+
+    a {
+      color: var(--primary);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .note {
+      border-left: 4px solid var(--primary);
+      background: #eff6ff;
+      padding: 14px 16px;
+      border-radius: 14px;
+      color: var(--muted);
+    }
+
+    .danger-box {
+      border-left: 4px solid var(--danger);
+      background: #fef2f2;
+      padding: 14px 16px;
+      border-radius: 14px;
+      color: #7f1d1d;
+    }
+
+    .footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.92rem;
+      padding-top: 16px;
+    }
+
+    .faq-item {
+      padding: 14px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .faq-item:first-child {
+      border-top: none;
+      padding-top: 0;
+    }
+
+    .faq-item strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+
+    .small {
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+
+    .button-link {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 12px 16px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: #fff;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .button-link:hover {
+      text-decoration: none;
+      opacity: 0.95;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="hero">
+      <h1>MyCPD Support</h1>
+      <p>
+        Need help with MyCPD? You can find support information, account help,
+        troubleshooting steps, and contact details below.
+      </p>
+    </section>
+
+    <div class="grid two">
+      <section class="card">
+        <h2>Contact Support</h2>
+        <div class="contact-box">
+          <div class="contact-item">
+            <strong>Email</strong>
+            <a href="mailto:support@mycpdapp.com">support@mycpdapp.com</a>
+          </div>
+          <div class="contact-item">
+            <strong>Response time</strong>
+            <span class="small">We aim to respond within 2 business days.</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Helpful Links</h2>
+        <p>
+          For general information about the app, visit our main website:
+        </p>
+        <a class="button-link" href="https://www.mycpdapp.com">Visit MyCPD</a>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Account Help</h2>
+      <div class="faq-item">
+        <strong>How do I reset my password?</strong>
+        <p>
+          On the login screen, select <em>Forgot password</em> and follow the
+          instructions sent to your email address.
+        </p>
+      </div>
+      <div class="faq-item">
+        <strong>How do I change my email or password?</strong>
+        <p>
+          Open the app, go to <em>Settings</em>, and use the account update
+          options available there.
+        </p>
+      </div>
+      <div class="faq-item">
+        <strong>How do I delete my account?</strong>
+        <p>
+          Open the app, go to <em>Settings</em>, and select <em>Delete account</em>.
+          This action permanently removes your account and associated data.
+        </p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Data and Privacy</h2>
+      <div class="note">
+        If you delete your account, your account data and linked records are removed
+        from the app.
+      </div>
+      <p>
+        For more information about how data is handled, please refer to your privacy
+        policy page if you have one linked on your website or in App Store Connect.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Troubleshooting</h2>
+      <ul>
+        <li>Make sure you are using the latest version of the app.</li>
+        <li>Check your internet connection if data is not loading correctly.</li>
+        <li>Try logging out and back in if your account details do not refresh.</li>
+        <li>For subscription issues, restore purchases from the app if available.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Frequently Asked Questions</h2>
+      <div class="faq-item">
+        <strong>Can I export my CPD records?</strong>
+        <p>
+          Yes. MyCPD allows you to export your records as PDF or CSV.
+        </p>
+      </div>
+      <div class="faq-item">
+        <strong>Can I share my CPD profile with employers?</strong>
+        <p>
+          Yes. You can create a live shareable view link and use filters to control
+          what is shown.
+        </p>
+      </div>
+      <div class="faq-item">
+        <strong>Will new matching activities appear in a shared view automatically?</strong>
+        <p>
+          Yes. If you create a filtered shared link, future activities that match
+          those filters will appear in that live shared view.
+        </p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Report a Bug or Suggest a Feature</h2>
+      <p>
+        You can use the in-app feedback form in the Settings area to report bugs or
+        suggest improvements.
+      </p>
+      <div class="danger-box">
+        If something is not working as expected, include as much detail as possible,
+        such as what happened, what you expected, and which device you were using.
+      </div>
+    </section>
+
+    <div class="footer">
+      © MyCPD. All rights reserved.
+    </div>
+  </div>
+</body>
+</html>
