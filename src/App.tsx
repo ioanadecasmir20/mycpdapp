@@ -33,6 +33,9 @@ import {
   PURCHASE_TYPE,
 } from "@capgo/native-purchases";
 
+import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
+
 type CPDRecord = {
   id: string;
   user_id: string;
@@ -285,7 +288,7 @@ function formatDateDMYBlank(dateString?: string | null) {
   return `${day}/${month}/${year}`;
 }
 
-function downloadCsv(records: CPDRecord[]) {
+async function downloadCsv(records: CPDRecord[]) {
   const headers = [
     "Activity Title",
     "CPD Type",
@@ -325,6 +328,30 @@ function downloadCsv(records: CPDRecord[]) {
       row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
     )
     .join("\n");
+
+  if (Capacitor.getPlatform() === "ios") {
+    const fileName = `cpd-records-${Date.now()}.csv`;
+
+    await Filesystem.writeFile({
+      path: fileName,
+      data: csv,
+      directory: Directory.Cache,
+      encoding: Encoding.UTF8,
+    });
+
+    const { uri } = await Filesystem.getUri({
+      directory: Directory.Cache,
+      path: fileName,
+    });
+
+    await Share.share({
+      title: "CPD Records CSV",
+      text: "Exported CPD records",
+      url: uri,
+    });
+
+    return;
+  }
 
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -593,7 +620,7 @@ export default function App() {
     return map;
   }, [plannedRecords]);
 
-  const [renewalCheckDone, setRenewalCheckDone] = useState(false);
+
 
   const [importRows, setImportRows] = useState<any[]>([]);
   const [importMessage, setImportMessage] = useState("");
@@ -708,6 +735,67 @@ export default function App() {
 
   const [subscriptionCheckedThisLogin, setSubscriptionCheckedThisLogin] = useState(false);
 
+  const [showFeedbackForm, setShowFeedbackForm] = useState(false);
+  const [feedbackType, setFeedbackType] = useState("Report a Bug");
+  const [feedbackIdentity, setFeedbackIdentity] = useState("include_email");
+  const [feedbackSubject, setFeedbackSubject] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackStatusMessage, setFeedbackStatusMessage] = useState("");
+
+  async function handleSubmitFeedback(e: FormEvent) {
+    e.preventDefault();
+    if (!session?.user?.id && feedbackIdentity === "include_email") {
+      setFeedbackStatusMessage("You must be logged in to include your email.");
+      return;
+    }
+
+    if (!feedbackSubject.trim()) {
+      setFeedbackStatusMessage("Subject is required.");
+      return;
+    }
+
+    if (!feedbackMessage.trim()) {
+      setFeedbackStatusMessage("Message is required.");
+      return;
+    }
+
+    setFeedbackSubmitting(true);
+    setFeedbackStatusMessage("");
+
+    try {
+      const payload = {
+        user_id: feedbackIdentity === "include_email" ? session?.user?.id ?? null : null,
+        email: feedbackIdentity === "include_email" ? email || session?.user?.email || null : null,
+        feedback_type: feedbackType,
+        subject: feedbackSubject.trim(),
+        message: feedbackMessage.trim(),
+        platform: Capacitor.getPlatform(),
+        app_version: "1.0.0",
+        is_anonymous: feedbackIdentity !== "include_email",
+      };
+
+      const { error } = await supabase.from("user_feedback").insert([payload]);
+
+      if (error) throw error;
+
+      setFeedbackStatusMessage("Submitted successfully.");
+
+      setTimeout(() => {
+        setShowFeedbackForm(false);
+        setFeedbackType("Report a Bug");
+        setFeedbackIdentity("include_email");
+        setFeedbackSubject("");
+        setFeedbackMessage("");
+        setFeedbackStatusMessage("");
+      }, 3000);
+    } catch (error: any) {
+      setFeedbackStatusMessage(error.message || "Failed to submit.");
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  }
+
   function requirePremium(reason: string) {
     setPremiumReason(reason);
     setShowPremiumPopup(true);
@@ -782,7 +870,7 @@ export default function App() {
       }
 
       setUserRole(nextRole);
-      
+
     } catch (error) {
       console.error("Failed to sync role from store:", error);
     }
@@ -1024,6 +1112,14 @@ export default function App() {
   }, [session?.user?.id]);
 
   useEffect(() => {
+    if (selectedArticle) {
+      setTimeout(() => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }, 0);
+    }
+  }, [selectedArticle]);
+
+  useEffect(() => {
     if (session?.user?.id) {
       setActiveTab("dashboard");
       setShowAddPage(false);
@@ -1040,13 +1136,13 @@ export default function App() {
     if (!profileLoaded) return;
     if (Capacitor.getPlatform() !== "ios") return;
     if (subscriptionCheckedThisLogin) return;
-  
+
     const run = async () => {
       await loadPremiumProduct();
       await syncRoleFromStore();
       setSubscriptionCheckedThisLogin(true);
     };
-  
+
     run();
   }, [session?.user?.id, profileLoaded, subscriptionCheckedThisLogin]);
 
@@ -1557,7 +1653,6 @@ export default function App() {
 
   useEffect(() => {
     if (session?.user?.id) {
-      setRenewalCheckDone(false);
       fetchRecords(session.user.id);
       fetchGoals(session.user.id);
       fetchProfile(session.user.id);
@@ -1570,11 +1665,18 @@ export default function App() {
       setSurname("");
       setMainJobRole("");
       setSecondaryJobRole("");
-      setRenewalCheckDone(false);
       setUserRole("member");
       setArticles([]);
     }
   }, [session?.user?.id]);
+
+  useEffect(() => {
+    if (activeTab !== "records" && showAddPage) {
+      resetForm();
+      setShowAddPage(false);
+      setAddPageTab("single");
+    }
+  }, [activeTab, showAddPage]);
 
   useEffect(() => {
     if (session?.user?.id) {
@@ -1583,17 +1685,6 @@ export default function App() {
       setArticles([]);
     }
   }, [session?.user?.id, userRole, articlePreviewMode]);
-
-  useEffect(() => {
-    if (!session?.user?.id) return;
-    if (renewalCheckDone) return;
-    if (recordsLoading) return;
-
-    checkAndCreateRenewalRecords(session.user.id).then(async () => {
-      await fetchRecords(session.user.id);
-      setRenewalCheckDone(true);
-    });
-  }, [session?.user?.id, recordsLoading, renewalCheckDone]);
 
   useEffect(() => {
     if (session?.user?.email) {
@@ -1688,11 +1779,11 @@ export default function App() {
       setAuthMessage("Enter your email first.");
       return;
     }
-  
+
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: "https://mycpdapp.com/reset-password",
     });
-  
+
     if (error) {
       setAuthMessage(error.message || "Failed to send reset email.");
     } else {
@@ -2064,7 +2155,7 @@ export default function App() {
     });
   }
 
-  function downloadPdf(recordsToExport: CPDRecord[]) {
+  async function downloadPdf(recordsToExport: CPDRecord[]) {
     const doc = new jsPDF({
       orientation: "landscape",
       unit: "mm",
@@ -2072,10 +2163,8 @@ export default function App() {
     });
 
     const exportDate = formatDateDMYBlank(new Date().toISOString());
-
     const fullName =
       [forename, surname].filter(Boolean).join(" ").trim() || "Not provided";
-
     const mainRole = mainJobRole || "Not provided";
     const secondaryRole = secondaryJobRole || "Not provided";
 
@@ -2136,8 +2225,6 @@ export default function App() {
       },
       headStyles: {
         fillColor: [37, 99, 235],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
       },
       columnStyles: {
         0: { cellWidth: 28 },
@@ -2145,18 +2232,41 @@ export default function App() {
         2: { cellWidth: 18 },
         3: { cellWidth: 18 },
         4: { cellWidth: 16 },
-        5: { cellWidth: 16 },
+        5: { cellWidth: 18 },
         6: { cellWidth: 22 },
-        7: { cellWidth: 22 },
+        7: { cellWidth: 20 },
         8: { cellWidth: 14 },
         9: { cellWidth: 34 },
         10: { cellWidth: 34 },
         11: { cellWidth: 32 },
       },
-      margin: { left: 6, right: 6 },
     });
 
-    doc.save("mycpd-log.pdf");
+    if (Capacitor.getPlatform() === "ios") {
+      const fileName = `cpd-records-${Date.now()}.pdf`;
+      const pdfBase64 = doc.output("datauristring").split(",")[1];
+
+      await Filesystem.writeFile({
+        path: fileName,
+        data: pdfBase64,
+        directory: Directory.Cache,
+      });
+
+      const { uri } = await Filesystem.getUri({
+        directory: Directory.Cache,
+        path: fileName,
+      });
+
+      await Share.share({
+        title: "CPD Records PDF",
+        text: "Exported CPD records",
+        url: uri,
+      });
+
+      return;
+    }
+
+    doc.save("cpd-records.pdf");
   }
 
   function formatDateDMY(dateString?: string | null) {
@@ -2449,69 +2559,63 @@ export default function App() {
     }
   }
 
-  function daysUntil(dateString: string) {
-    const today = new Date();
-    const target = new Date(dateString);
+  async function createRenewalRecordIfNeeded(record: CPDRecord, userId: string) {
+    if (!record.renewal_required) return;
+    if (!record.expiry_date) return;
+    if (record.status !== "Completed" && record.status !== "In Progress") return;
 
-    today.setHours(0, 0, 0, 0);
-    target.setHours(0, 0, 0, 0);
+    const { data: existingRenewals, error: existingError } = await supabase
+      .from("cpd_records")
+      .select("id, activity_title, provider, cpd_type, sectors, status")
+      .eq("user_id", userId)
+      .eq("status", "Planned")
+      .eq("activity_title", `${record.activity_title} Renewal`);
 
-    const diffMs = target.getTime() - today.getTime();
-    return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-  }
+    if (existingError) {
+      console.error("Failed to check existing renewal records:", existingError);
+      return;
+    }
 
-  async function checkAndCreateRenewalRecords(userId: string) {
-    const renewableRecords = records.filter((record) => {
-      if (!record.renewal_required) return false;
-      if (!record.expiry_date) return false;
-      if (record.status !== "Completed" && record.status !== "In Progress") return false;
+    const existingPlannedRenewal = (existingRenewals || []).some((r: any) => {
+      const sameProvider = (r.provider || "") === (record.provider || "");
+      const sameType = r.cpd_type === record.cpd_type;
 
-      const days = daysUntil(record.expiry_date);
-      return days >= 0 && days <= 30;
+      const recordSectors = Array.isArray(record.sectors) ? record.sectors.join(",") : "";
+      const plannedSectors = Array.isArray(r.sectors) ? r.sectors.join(",") : "";
+      const sameSectors = recordSectors === plannedSectors;
+
+      return sameProvider && sameType && sameSectors;
     });
 
-    for (const record of renewableRecords) {
-      const existingPlannedRenewal = records.some((r) => {
-        if (r.user_id !== userId) return false;
-        if (r.status !== "Planned") return false;
-        if (r.activity_title !== `${record.activity_title} Renewal`) return false;
+    if (existingPlannedRenewal) return;
 
-        const sameProvider = (r.provider || "") === (record.provider || "");
-        const sameType = r.cpd_type === record.cpd_type;
+    const renewalPayload = {
+      user_id: userId,
+      activity_title: `${record.activity_title} Renewal`,
+      cpd_type: record.cpd_type,
+      date_completed: null,
+      planned_for_date: null,
+      expiry_date: null,
+      renewal_required: false,
+      hours: record.hours,
+      minutes: record.minutes,
+      provider: record.provider,
+      learning_method: record.learning_method,
+      sectors: record.sectors,
+      description: record.expiry_date
+        ? `Renewal reminder for activity expiring on ${record.expiry_date}.${record.description ? ` ${record.description}` : ""}`
+        : record.description,
+      outcome: record.outcome,
+      evidence_available: false,
+      certificate_file_url: null,
+      status: "Planned",
+      updated_at: new Date().toISOString(),
+    };
 
-        const recordSectors = Array.isArray(record.sectors) ? record.sectors.join(",") : "";
-        const plannedSectors = Array.isArray(r.sectors) ? r.sectors.join(",") : "";
-        const sameSectors = recordSectors === plannedSectors;
+    const { error } = await supabase.from("cpd_records").insert([renewalPayload]);
 
-        return sameProvider && sameType && sameSectors;
-      });
-
-      if (existingPlannedRenewal) continue;
-
-      const renewalPayload = {
-        user_id: userId,
-        activity_title: `${record.activity_title} Renewal`,
-        cpd_type: record.cpd_type,
-        date_completed: null,
-        planned_for_date: null,
-        expiry_date: null,
-        renewal_required: false,
-        hours: record.hours,
-        minutes: record.minutes,
-        provider: record.provider,
-        learning_method: record.learning_method,
-        sectors: record.sectors,
-        description: record.expiry_date
-          ? `Renewal reminder for activity expiring on ${record.expiry_date}.${record.description ? ` ${record.description}` : ""}`
-          : record.description,
-        outcome: record.outcome,
-        evidence_available: false,
-        certificate_file_url: null,
-        status: "Planned",
-        updated_at: new Date().toISOString(),
-      };
-
-      await supabase.from("cpd_records").insert([renewalPayload]);
+    if (error) {
+      console.error("Failed to create renewal record:", error);
     }
   }
 
@@ -2823,8 +2927,7 @@ export default function App() {
 
       if (error) throw error;
 
-      const shareUrl = `${publicShareBaseUrl}/${token}`;
-      setShareMessage(`Shared link created: ${shareUrl}`);
+      setShareMessage(`Shared link created! Check SHARE tab.`);
       setShareTitle("");
       await fetchSharedViews(session.user.id);
     } catch (error: any) {
@@ -3174,6 +3277,7 @@ export default function App() {
         setSavingRecord(false);
         return;
       }
+
       let certificateUrl: string | null | undefined = undefined;
 
       if (certificateFile) {
@@ -3210,13 +3314,17 @@ export default function App() {
           updatePayload.certificate_file_url = certificateUrl;
         }
 
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from("cpd_records")
           .update(updatePayload)
           .eq("id", editingId)
-          .eq("user_id", session.user.id);
+          .eq("user_id", session.user.id)
+          .select()
+          .single();
 
         if (error) throw error;
+
+        await createRenewalRecordIfNeeded(data, session.user.id);
 
         setRecordMessage("CPD record updated successfully.");
       } else {
@@ -3226,19 +3334,32 @@ export default function App() {
           certificate_file_url: certificateUrl ?? null,
         };
 
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from("cpd_records")
-          .insert([insertPayload]);
+          .insert([insertPayload])
+          .select()
+          .single();
 
         if (error) throw error;
+
+        await createRenewalRecordIfNeeded(data, session.user.id);
 
         setRecordMessage("CPD record added successfully.");
       }
 
       await fetchRecords(session.user.id);
-      setForm(emptyForm);
-      setCertificateFile(null);
-      setEditingId(null);
+
+      resetForm();
+      setShowAddPage(false);
+      setAddPageTab("single");
+      setActiveTab("records");
+      setRecordMessage(
+        editingId
+          ? "Your record was updated successfully."
+          : "Your record was added successfully."
+      );
+      window.scrollTo({ top: 0, behavior: "smooth" });
+
     } catch (error: any) {
       setRecordMessage(error.message || "Failed to save record.");
     } finally {
@@ -3293,41 +3414,41 @@ export default function App() {
     const confirmed = window.confirm(
       "Are you sure you want to delete your account? This cannot be undone."
     );
-  
+
     if (!confirmed || !session?.user?.id) return;
-  
+
     setSettingsLoading(true);
     setSettingsMessage("");
-  
+
     try {
       const {
         data: { session: currentSession },
       } = await supabase.auth.getSession();
-  
+
       const accessToken = currentSession?.access_token;
-  
+
       const { error } = await supabase.functions.invoke("delete-account", {
         body: { userId: session.user.id },
         headers: accessToken
           ? {
-              Authorization: `Bearer ${accessToken}`,
-            }
+            Authorization: `Bearer ${accessToken}`,
+          }
           : undefined,
       });
-  
+
       if (error) throw error;
-  
+
       await supabase.auth.signOut();
       setSettingsMessage("Your account has been deleted.");
     } catch (error: any) {
       console.error("Delete account error:", error);
-  
+
       const serverMessage =
         error?.context?.json?.error ||
         error?.context?.json?.details ||
         error?.message ||
         "Failed to delete account.";
-  
+
       setSettingsMessage(serverMessage);
     } finally {
       setSettingsLoading(false);
@@ -5013,7 +5134,9 @@ export default function App() {
                     </div>
 
                     <button
-                      onClick={() => downloadCsv(filteredRecords)}
+                      onClick={async () => {
+                        await downloadCsv(filteredRecords);
+                      }}
                       style={{
                         ...secondaryButtonStyle,
                         display: "flex",
@@ -5029,12 +5152,12 @@ export default function App() {
                     </button>
 
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         if (!canDownloadPdf) {
                           requirePremium("PDF export is a Premium feature.");
                           return;
                         }
-                        downloadPdf(filteredRecords);
+                        await downloadPdf(filteredRecords);
                       }}
                       style={{
                         ...secondaryButtonStyle,
@@ -6462,6 +6585,93 @@ export default function App() {
                       Update password
                     </button>
                   </form>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowFeedbackForm((prev) => !prev)}
+                    style={{
+                      ...secondaryButtonStyle,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                      marginTop: 8,
+                    }}
+                  >
+                    Report Bug / Suggest Feature
+                  </button>
+
+                  {showFeedbackForm && (
+                    <form onSubmit={handleSubmitFeedback} style={{ ...solidCard, padding: 16, marginTop: 16 }}>
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={fieldLabelStyle}>Type</label>
+                        <select
+                          value={feedbackType}
+                          onChange={(e) => setFeedbackType(e.target.value)}
+                          style={inputStyle}
+                        >
+                          <option>Report a Bug</option>
+                          <option>Suggest a Feature</option>
+                        </select>
+                      </div>
+
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={fieldLabelStyle}>Identity</label>
+                        <select
+                          value={feedbackIdentity}
+                          onChange={(e) => setFeedbackIdentity(e.target.value)}
+                          style={inputStyle}
+                        >
+                          <option value="include_email">Include my email</option>
+                          <option value="anonymous">Submit anonymously</option>
+                        </select>
+                      </div>
+
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={fieldLabelStyle}>Subject</label>
+                        <input
+                          type="text"
+                          value={feedbackSubject}
+                          onChange={(e) => setFeedbackSubject(e.target.value)}
+                          style={inputStyle}
+                          placeholder="Enter subject"
+                        />
+                      </div>
+
+                      <div style={{ marginBottom: 12 }}>
+                        <label style={fieldLabelStyle}>Message</label>
+                        <textarea
+                          value={feedbackMessage}
+                          onChange={(e) => setFeedbackMessage(e.target.value)}
+                          style={{ ...inputStyle, minHeight: 120, resize: "vertical" }}
+                          placeholder="Describe the bug or feature suggestion"
+                        />
+                      </div>
+
+                      {feedbackStatusMessage && (
+                        <div style={{ marginBottom: 12, color: theme.colors.subtext }}>
+                          {feedbackStatusMessage}
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                        <button type="submit" style={primaryButtonStyle} disabled={feedbackSubmitting}>
+                          {feedbackSubmitting ? "Submitting..." : "Submit"}
+                        </button>
+
+                        <button
+                          type="button"
+                          style={secondaryButtonStyle}
+                          onClick={() => {
+                            setShowFeedbackForm(false);
+                            setFeedbackStatusMessage("");
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
 
                   <div
                     style={{
