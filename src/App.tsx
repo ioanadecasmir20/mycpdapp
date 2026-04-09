@@ -743,6 +743,18 @@ export default function App() {
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [feedbackStatusMessage, setFeedbackStatusMessage] = useState("");
 
+  const [isGuestMode, setIsGuestMode] = useState(false);
+  const [showGuestPopup, setShowGuestPopup] = useState(false);
+  const [guestActionMessage, setGuestActionMessage] = useState("");
+  const isGuest = isGuestMode && !session;
+
+  function requireAccount(message = "You must create an account to use these features.") {
+    if (!isGuest) return false;
+    setGuestActionMessage(message);
+    setShowGuestPopup(true);
+    return true;
+  }
+
   async function handleSubmitFeedback(e: FormEvent) {
     e.preventDefault();
     if (!session?.user?.id && feedbackIdentity === "include_email") {
@@ -1104,6 +1116,16 @@ export default function App() {
       setSharedViewLoading(false);
     }
   }
+
+  useEffect(() => {
+    const init = async () => {
+      setLoading(true);
+      await supabase.auth.getSession();
+      setLoading(false);
+    };
+
+    init();
+  }, []);
 
   useEffect(() => {
     if (!session?.user?.id) {
@@ -1637,18 +1659,19 @@ export default function App() {
   }, [articleMessage]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session ?? null);
-      setLoading(false);
-    });
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setSession(session);
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession ?? null);
-    });
+        if (session) {
+          setIsGuestMode(false);
+        }
+      }
+    );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      listener?.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -2388,6 +2411,13 @@ export default function App() {
   }
 
   async function fetchGoals(userId: string) {
+    if (!session?.user?.id) {
+      if (isGuest) {
+        setGoals([]);
+        setGoalsLoading(false);
+      }
+      return;
+    }
     setGoalsLoading(true);
 
     const { data } = await supabase
@@ -2867,6 +2897,13 @@ export default function App() {
   }
 
   async function fetchSharedViews(userId: string) {
+    if (!session?.user?.id) {
+      if (isGuest) {
+        setSharedViews([]);
+        setSharedViewsLoading(false);
+      }
+      return;
+    }
     setSharedViewsLoading(true);
 
     const { data, error } = await supabase
@@ -3196,9 +3233,19 @@ export default function App() {
     setIsSignup(false);
 
     await supabase.auth.signOut();
+
+    setIsGuestMode(false);
+    setActiveTab("dashboard");
   }
 
   async function fetchRecords(userId: string) {
+    if (!session?.user?.id) {
+      if (isGuest) {
+        setRecords([]);
+        setRecordsLoading(false);
+      }
+      return;
+    }
     setRecordsLoading(true);
 
     const { data, error } = await supabase
@@ -3681,7 +3728,7 @@ export default function App() {
     );
   }
 
-  if (!session) {
+  if (!session && !isGuestMode) {
     return (
       <div
         style={{
@@ -3825,6 +3872,22 @@ export default function App() {
                 Forgot password
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsGuestMode(true);
+                setActiveTab("dashboard");
+                setAuthMessage("");
+              }}
+              style={{
+                ...secondaryButtonStyle,
+                width: "100%",
+                marginTop: 12,
+              }}
+            >
+              Continue as Guest
+            </button>
           </form>
 
           <button
@@ -4371,6 +4434,25 @@ export default function App() {
                     {forename ? `Welcome, ${forename}` : "Dashboard"}
                   </h2>
                 </div>
+
+                {isGuest && (
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 10px",
+                      borderRadius: theme.radius.pill,
+                      background: theme.colors.primarySoft,
+                      color: theme.colors.primaryDark,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      marginTop: 8,
+                    }}
+                  >
+                    Guest mode
+                  </div>
+                )}
 
                 <div
                   style={{
@@ -5087,6 +5169,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => {
+                      if (requireAccount()) return;
                       if (!canCreateRecord) {
                         requirePremium(
                           "Free members can store up to 50 CPD records. Upgrade to Premium for unlimited records."
@@ -5135,6 +5218,7 @@ export default function App() {
 
                     <button
                       onClick={async () => {
+                        if (requireAccount()) return;
                         await downloadCsv(filteredRecords);
                       }}
                       style={{
@@ -5153,6 +5237,7 @@ export default function App() {
 
                     <button
                       onClick={async () => {
+                        if (requireAccount()) return;
                         if (!canDownloadPdf) {
                           requirePremium("PDF export is a Premium feature.");
                           return;
@@ -5175,7 +5260,10 @@ export default function App() {
                     </button>
 
                     <button
-                      onClick={handleCreateSharedView}
+                      onClick={() => {
+                        if (requireAccount()) return;
+                        handleCreateSharedView();
+                      }}
                       style={{
                         ...secondaryButtonStyle,
                         display: "flex",
@@ -5445,7 +5533,10 @@ export default function App() {
                 </div>
 
                 <form
-                  onSubmit={handleCreateGoal}
+                  onSubmit={() => {
+                    if (requireAccount()) return;
+                    handleCreateGoal
+                  }}
                   style={{
                     background: "#fff",
                     borderBottom: `1px solid ${theme.colors.border}`,
@@ -6312,6 +6403,7 @@ export default function App() {
                             <button
                               type="button"
                               onClick={() => {
+                                if (requireAccount()) return;
                                 if (!canReadArticles) {
                                   requirePremium("Reading full articles is a Premium feature.");
                                   return;
@@ -6457,281 +6549,461 @@ export default function App() {
                 <div style={{ marginBottom: 16 }}>
                   <h2 style={{ margin: 0, fontSize: 24 }}>Settings</h2>
                   <p style={{ margin: "6px 0 0", color: theme.colors.subtext }}>
-                    Manage your account and security settings.
+                    {isGuest
+                      ? "You are browsing as a guest."
+                      : "Manage your account and security settings."}
                   </p>
                 </div>
 
                 <div style={{ display: "grid", gap: 16 }}>
-                  <form
-                    onSubmit={handleUpdateProfile}
-                    style={{
-                      background: "#fff",
-                      borderBottom: `1px solid ${theme.colors.border}`,
-                      borderRadius: 0,
-                      boxShadow: "none",
-                      padding: 16,
-                      display: "grid",
-                      gap: 12,
-                    }}
-                  >
-                    <h3 style={{ margin: 0, fontSize: 18 }}>Profile details</h3>
+                  {isGuest ? (
+                    <>
+                      <div
+                        style={{
+                          background: "#fff",
+                          borderBottom: `1px solid ${theme.colors.border}`,
+                          borderRadius: 0,
+                          boxShadow: "none",
+                          padding: 16,
+                          display: "grid",
+                          gap: 12,
+                        }}
+                      >
+                        <h3 style={{ margin: 0, fontSize: 18 }}>Guest access</h3>
+                        <p style={{ margin: 0, color: theme.colors.subtext, lineHeight: 1.6 }}>
+                          You are a Guest. You can explore the app, but you need to create an
+                          account to add records, create goals, export files, share views, and
+                          use other account-based features.
+                        </p>
 
-                    <div style={fieldWrapStyle}>
-                      <label style={fieldLabelStyle}>Forename</label>
-                      <input
-                        style={inputStyle}
-                        value={forename}
-                        onChange={(e) => setForename(e.target.value)}
-                        required
-                      />
-                    </div>
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsGuestMode(false);
+                              setIsSignup(true);
+                              setAuthMessage("");
+                            }}
+                            style={primaryButtonStyle}
+                          >
+                            Create account
+                          </button>
 
-                    <div style={fieldWrapStyle}>
-                      <label style={fieldLabelStyle}>Surname</label>
-                      <input
-                        style={inputStyle}
-                        value={surname}
-                        onChange={(e) => setSurname(e.target.value)}
-                        required
-                      />
-                    </div>
-
-                    <div style={fieldWrapStyle}>
-                      <label style={fieldLabelStyle}>Main job role</label>
-                      <input
-                        style={inputStyle}
-                        value={mainJobRole}
-                        onChange={(e) => setMainJobRole(e.target.value)}
-                      />
-                    </div>
-
-                    <div style={fieldWrapStyle}>
-                      <label style={fieldLabelStyle}>Secondary job role</label>
-                      <input
-                        style={inputStyle}
-                        value={secondaryJobRole}
-                        onChange={(e) => setSecondaryJobRole(e.target.value)}
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      style={secondaryButtonStyle}
-                      disabled={settingsLoading}
-                    >
-                      Save profile
-                    </button>
-                  </form>
-                  <form
-                    onSubmit={handleUpdateEmail}
-                    style={{
-                      background: "#fff",
-                      borderBottom: `1px solid ${theme.colors.border}`,
-                      borderRadius: 0,
-                      boxShadow: "none",
-                      padding: 16,
-                      display: "grid",
-                      gap: 12,
-                    }}
-                  >
-                    <h3 style={{ margin: 0, fontSize: 18 }}>Change email</h3>
-                    <div style={fieldWrapStyle}>
-                      <label style={fieldLabelStyle}>Email address</label>
-                      <input
-                        style={inputStyle}
-                        type="email"
-                        value={newEmail}
-                        onChange={(e) => setNewEmail(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      style={secondaryButtonStyle}
-                      disabled={settingsLoading}
-                    >
-                      Update email
-                    </button>
-                  </form>
-
-                  <form
-                    onSubmit={handleUpdatePassword}
-                    style={{
-                      background: "#fff",
-                      borderBottom: `1px solid ${theme.colors.border}`,
-                      borderRadius: 0,
-                      boxShadow: "none",
-                      padding: 16,
-                      display: "grid",
-                      gap: 12,
-                    }}
-                  >
-                    <h3 style={{ margin: 0, fontSize: 18 }}>Change password</h3>
-                    <div style={fieldWrapStyle}>
-                      <label style={fieldLabelStyle}>New password</label>
-                      <input
-                        style={inputStyle}
-                        type="password"
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        required
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      style={secondaryButtonStyle}
-                      disabled={settingsLoading}
-                    >
-                      Update password
-                    </button>
-                  </form>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowFeedbackForm((prev) => !prev)}
-                    style={{
-                      ...secondaryButtonStyle,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 8,
-                      marginTop: 8,
-                    }}
-                  >
-                    Report Bug / Suggest Feature
-                  </button>
-
-                  {showFeedbackForm && (
-                    <form onSubmit={handleSubmitFeedback} style={{ ...solidCard, padding: 16, marginTop: 16 }}>
-                      <div style={{ marginBottom: 12 }}>
-                        <label style={fieldLabelStyle}>Type</label>
-                        <select
-                          value={feedbackType}
-                          onChange={(e) => setFeedbackType(e.target.value)}
-                          style={inputStyle}
-                        >
-                          <option>Report a Bug</option>
-                          <option>Suggest a Feature</option>
-                        </select>
-                      </div>
-
-                      <div style={{ marginBottom: 12 }}>
-                        <label style={fieldLabelStyle}>Identity</label>
-                        <select
-                          value={feedbackIdentity}
-                          onChange={(e) => setFeedbackIdentity(e.target.value)}
-                          style={inputStyle}
-                        >
-                          <option value="include_email">Include my email</option>
-                          <option value="anonymous">Submit anonymously</option>
-                        </select>
-                      </div>
-
-                      <div style={{ marginBottom: 12 }}>
-                        <label style={fieldLabelStyle}>Subject</label>
-                        <input
-                          type="text"
-                          value={feedbackSubject}
-                          onChange={(e) => setFeedbackSubject(e.target.value)}
-                          style={inputStyle}
-                          placeholder="Enter subject"
-                        />
-                      </div>
-
-                      <div style={{ marginBottom: 12 }}>
-                        <label style={fieldLabelStyle}>Message</label>
-                        <textarea
-                          value={feedbackMessage}
-                          onChange={(e) => setFeedbackMessage(e.target.value)}
-                          style={{ ...inputStyle, minHeight: 120, resize: "vertical" }}
-                          placeholder="Describe the bug or feature suggestion"
-                        />
-                      </div>
-
-                      {feedbackStatusMessage && (
-                        <div style={{ marginBottom: 12, color: theme.colors.subtext }}>
-                          {feedbackStatusMessage}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsGuestMode(false);
+                              setIsSignup(false);
+                              setAuthMessage("");
+                            }}
+                            style={secondaryButtonStyle}
+                          >
+                            Log in
+                          </button>
                         </div>
-                      )}
+                      </div>
 
-                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                        <button type="submit" style={primaryButtonStyle} disabled={feedbackSubmitting}>
-                          {feedbackSubmitting ? "Submitting..." : "Submit"}
-                        </button>
+                      <div
+                        style={{
+                          background: "#fff",
+                          borderBottom: `1px solid ${theme.colors.border}`,
+                          borderRadius: 0,
+                          boxShadow: "none",
+                          padding: 16,
+                          display: "grid",
+                          gap: 12,
+                        }}
+                      >
+                        <h3 style={{ margin: 0, fontSize: 18 }}>Feedback</h3>
+                        <p style={{ margin: 0, color: theme.colors.subtext, lineHeight: 1.6 }}>
+                          You can still report a bug or suggest a feature as a guest.
+                        </p>
 
                         <button
                           type="button"
-                          style={secondaryButtonStyle}
                           onClick={() => {
-                            setShowFeedbackForm(false);
-                            setFeedbackStatusMessage("");
+                            setFeedbackIdentity("anonymous");
+                            setShowFeedbackForm((prev) => !prev);
+                          }}
+                          style={{
+                            ...secondaryButtonStyle,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 8,
+                            marginTop: 8,
                           }}
                         >
-                          Cancel
+                          Report Bug / Suggest Feature
+                        </button>
+
+                        {showFeedbackForm && (
+                          <form
+                            onSubmit={handleSubmitFeedback}
+                            style={{ ...solidCard, padding: 16, marginTop: 16 }}
+                          >
+                            <div style={{ marginBottom: 12 }}>
+                              <label style={fieldLabelStyle}>Type</label>
+                              <select
+                                value={feedbackType}
+                                onChange={(e) => setFeedbackType(e.target.value)}
+                                style={inputStyle}
+                              >
+                                <option>Report a Bug</option>
+                                <option>Suggest a Feature</option>
+                              </select>
+                            </div>
+
+                            <div style={{ marginBottom: 12 }}>
+                              <label style={fieldLabelStyle}>Identity</label>
+                              <select
+                                value={feedbackIdentity}
+                                onChange={(e) => setFeedbackIdentity(e.target.value)}
+                                style={inputStyle}
+                              >
+                                <option value="anonymous">Submit anonymously</option>
+                                <option value="include_email">Include my email</option>
+                              </select>
+                            </div>
+
+                            <div style={{ marginBottom: 12 }}>
+                              <label style={fieldLabelStyle}>Subject</label>
+                              <input
+                                type="text"
+                                value={feedbackSubject}
+                                onChange={(e) => setFeedbackSubject(e.target.value)}
+                                style={inputStyle}
+                                placeholder="Enter subject"
+                              />
+                            </div>
+
+                            <div style={{ marginBottom: 12 }}>
+                              <label style={fieldLabelStyle}>Message</label>
+                              <textarea
+                                value={feedbackMessage}
+                                onChange={(e) => setFeedbackMessage(e.target.value)}
+                                style={{ ...inputStyle, minHeight: 120, resize: "vertical" }}
+                                placeholder="Describe the bug or feature suggestion"
+                              />
+                            </div>
+
+                            {feedbackStatusMessage && (
+                              <div
+                                style={{
+                                  marginBottom: 12,
+                                  color: theme.colors.subtext,
+                                }}
+                              >
+                                {feedbackStatusMessage}
+                              </div>
+                            )}
+
+                            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                              <button
+                                type="submit"
+                                style={primaryButtonStyle}
+                                disabled={feedbackSubmitting}
+                              >
+                                {feedbackSubmitting ? "Submitting..." : "Submit"}
+                              </button>
+
+                              <button
+                                type="button"
+                                style={secondaryButtonStyle}
+                                onClick={() => {
+                                  setShowFeedbackForm(false);
+                                  setFeedbackStatusMessage("");
+                                }}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <form
+                        onSubmit={handleUpdateProfile}
+                        style={{
+                          background: "#fff",
+                          borderBottom: `1px solid ${theme.colors.border}`,
+                          borderRadius: 0,
+                          boxShadow: "none",
+                          padding: 16,
+                          display: "grid",
+                          gap: 12,
+                        }}
+                      >
+                        <h3 style={{ margin: 0, fontSize: 18 }}>Profile details</h3>
+
+                        <div style={fieldWrapStyle}>
+                          <label style={fieldLabelStyle}>Forename</label>
+                          <input
+                            style={inputStyle}
+                            value={forename}
+                            onChange={(e) => setForename(e.target.value)}
+                            required
+                          />
+                        </div>
+
+                        <div style={fieldWrapStyle}>
+                          <label style={fieldLabelStyle}>Surname</label>
+                          <input
+                            style={inputStyle}
+                            value={surname}
+                            onChange={(e) => setSurname(e.target.value)}
+                            required
+                          />
+                        </div>
+
+                        <div style={fieldWrapStyle}>
+                          <label style={fieldLabelStyle}>Main job role</label>
+                          <input
+                            style={inputStyle}
+                            value={mainJobRole}
+                            onChange={(e) => setMainJobRole(e.target.value)}
+                          />
+                        </div>
+
+                        <div style={fieldWrapStyle}>
+                          <label style={fieldLabelStyle}>Secondary job role</label>
+                          <input
+                            style={inputStyle}
+                            value={secondaryJobRole}
+                            onChange={(e) => setSecondaryJobRole(e.target.value)}
+                          />
+                        </div>
+
+                        <button
+                          type="submit"
+                          style={secondaryButtonStyle}
+                          disabled={settingsLoading}
+                        >
+                          Save profile
+                        </button>
+                      </form>
+
+                      <form
+                        onSubmit={handleUpdateEmail}
+                        style={{
+                          background: "#fff",
+                          borderBottom: `1px solid ${theme.colors.border}`,
+                          borderRadius: 0,
+                          boxShadow: "none",
+                          padding: 16,
+                          display: "grid",
+                          gap: 12,
+                        }}
+                      >
+                        <h3 style={{ margin: 0, fontSize: 18 }}>Change email</h3>
+                        <div style={fieldWrapStyle}>
+                          <label style={fieldLabelStyle}>Email address</label>
+                          <input
+                            style={inputStyle}
+                            type="email"
+                            value={newEmail}
+                            onChange={(e) => setNewEmail(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          style={secondaryButtonStyle}
+                          disabled={settingsLoading}
+                        >
+                          Update email
+                        </button>
+                      </form>
+
+                      <form
+                        onSubmit={handleUpdatePassword}
+                        style={{
+                          background: "#fff",
+                          borderBottom: `1px solid ${theme.colors.border}`,
+                          borderRadius: 0,
+                          boxShadow: "none",
+                          padding: 16,
+                          display: "grid",
+                          gap: 12,
+                        }}
+                      >
+                        <h3 style={{ margin: 0, fontSize: 18 }}>Change password</h3>
+                        <div style={fieldWrapStyle}>
+                          <label style={fieldLabelStyle}>New password</label>
+                          <input
+                            style={inputStyle}
+                            type="password"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          style={secondaryButtonStyle}
+                          disabled={settingsLoading}
+                        >
+                          Update password
+                        </button>
+                      </form>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowFeedbackForm((prev) => !prev)}
+                        style={{
+                          ...secondaryButtonStyle,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: 8,
+                          marginTop: 8,
+                        }}
+                      >
+                        Report Bug / Suggest Feature
+                      </button>
+
+                      {showFeedbackForm && (
+                        <form
+                          onSubmit={handleSubmitFeedback}
+                          style={{ ...solidCard, padding: 16, marginTop: 16 }}
+                        >
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={fieldLabelStyle}>Type</label>
+                            <select
+                              value={feedbackType}
+                              onChange={(e) => setFeedbackType(e.target.value)}
+                              style={inputStyle}
+                            >
+                              <option>Report a Bug</option>
+                              <option>Suggest a Feature</option>
+                            </select>
+                          </div>
+
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={fieldLabelStyle}>Identity</label>
+                            <select
+                              value={feedbackIdentity}
+                              onChange={(e) => setFeedbackIdentity(e.target.value)}
+                              style={inputStyle}
+                            >
+                              <option value="include_email">Include my email</option>
+                              <option value="anonymous">Submit anonymously</option>
+                            </select>
+                          </div>
+
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={fieldLabelStyle}>Subject</label>
+                            <input
+                              type="text"
+                              value={feedbackSubject}
+                              onChange={(e) => setFeedbackSubject(e.target.value)}
+                              style={inputStyle}
+                              placeholder="Enter subject"
+                            />
+                          </div>
+
+                          <div style={{ marginBottom: 12 }}>
+                            <label style={fieldLabelStyle}>Message</label>
+                            <textarea
+                              value={feedbackMessage}
+                              onChange={(e) => setFeedbackMessage(e.target.value)}
+                              style={{ ...inputStyle, minHeight: 120, resize: "vertical" }}
+                              placeholder="Describe the bug or feature suggestion"
+                            />
+                          </div>
+
+                          {feedbackStatusMessage && (
+                            <div style={{ marginBottom: 12, color: theme.colors.subtext }}>
+                              {feedbackStatusMessage}
+                            </div>
+                          )}
+
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <button
+                              type="submit"
+                              style={primaryButtonStyle}
+                              disabled={feedbackSubmitting}
+                            >
+                              {feedbackSubmitting ? "Submitting..." : "Submit"}
+                            </button>
+
+                            <button
+                              type="button"
+                              style={secondaryButtonStyle}
+                              onClick={() => {
+                                setShowFeedbackForm(false);
+                                setFeedbackStatusMessage("");
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      )}
+
+                      <div
+                        style={{
+                          background: "#fff",
+                          borderBottom: `1px solid ${theme.colors.border}`,
+                          borderRadius: 0,
+                          boxShadow: "none",
+                          padding: 16,
+                          display: "grid",
+                          gap: 12,
+                        }}
+                      >
+                        <h3 style={{ margin: 0, fontSize: 18 }}>Session</h3>
+                        <button
+                          onClick={handleLogout}
+                          style={{
+                            ...secondaryButtonStyle,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 8,
+                          }}
+                        >
+                          <LogOut size={18} strokeWidth={2} />
+                          Log out
                         </button>
                       </div>
-                    </form>
+
+                      <div
+                        style={{
+                          background: "#fff",
+                          borderBottom: `1px solid ${theme.colors.border}`,
+                          borderRadius: 0,
+                          boxShadow: "none",
+                          padding: 16,
+                          display: "grid",
+                          gap: 12,
+                          border: "1px solid rgba(220,38,38,0.15)",
+                        }}
+                      >
+                        <h3
+                          style={{ margin: 0, fontSize: 18, color: theme.colors.danger }}
+                        >
+                          Danger zone
+                        </h3>
+                        <button
+                          onClick={handleDeleteAccount}
+                          style={{
+                            ...dangerButtonStyle,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 8,
+                            width: "fit-content",
+                          }}
+                        >
+                          <Trash2 size={18} strokeWidth={2} />
+                          Delete account
+                        </button>
+                      </div>
+                    </>
                   )}
-
-                  <div
-                    style={{
-                      background: "#fff",
-                      borderBottom: `1px solid ${theme.colors.border}`,
-                      borderRadius: 0,
-                      boxShadow: "none",
-                      padding: 16,
-                      display: "grid",
-                      gap: 12,
-                    }}
-                  >
-                    <h3 style={{ margin: 0, fontSize: 18 }}>Session</h3>
-                    <button
-                      onClick={handleLogout}
-                      style={{
-                        ...secondaryButtonStyle,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 8,
-                      }}
-                    >
-                      <LogOut size={18} strokeWidth={2} />
-                      Log out
-                    </button>
-                  </div>
-
-                  <div
-                    style={{
-                      background: "#fff",
-                      borderBottom: `1px solid ${theme.colors.border}`,
-                      borderRadius: 0,
-                      boxShadow: "none",
-                      padding: 16,
-                      display: "grid",
-                      gap: 12,
-                      border: "1px solid rgba(220,38,38,0.15)",
-                    }}
-                  >
-                    <h3
-                      style={{ margin: 0, fontSize: 18, color: theme.colors.danger }}
-                    >
-                      Danger zone
-                    </h3>
-                    <button
-                      onClick={handleDeleteAccount}
-                      style={{
-                        ...dangerButtonStyle,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 8,
-                        width: "fit-content",
-                      }}
-                    >
-                      <Trash2 size={18} strokeWidth={2} />
-                      Delete account
-                    </button>
-                  </div>
 
                   {settingsMessage && (
                     <div
@@ -7530,6 +7802,46 @@ export default function App() {
                       {purchaseMessage}
                     </p>
                   )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGuestPopup && (
+        <div style={modalOverlayStyle} onClick={() => setShowGuestPopup(false)}>
+          <div style={modalCardWrapStyle} onClick={(e) => e.stopPropagation()}>
+            <div style={modalCardStyle}>
+              <div style={sheetHeaderStyle}>
+                <h3 style={{ margin: 0, fontSize: 22 }}>Create an account</h3>
+                <p style={{ margin: "8px 0 0", color: theme.colors.subtext }}>
+                  {guestActionMessage || "You must create an account to use these features."}
+                </p>
+              </div>
+
+              <div style={sheetSectionStyle}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowGuestPopup(false)}
+                    style={secondaryButtonStyle}
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowGuestPopup(false);
+                      setIsGuestMode(false);
+                      setIsSignup(true);
+                      setAuthMessage("");
+                    }}
+                    style={primaryButtonStyle}
+                  >
+                    Create account
+                  </button>
                 </div>
               </div>
             </div>
